@@ -1,6 +1,6 @@
 #![no_std]
 extern crate alloc;
 
-mod xsk;
+pub mod xsk;
 /// Bindings for XDP (kernel-interface).
 mod xdp;
