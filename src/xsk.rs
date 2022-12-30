@@ -7,19 +7,22 @@
 //! The data structures here are not *safe* to construct. Some of them depend on the caller to
 //! uphold guarantees such as keeping an mmap alive, or holding onto a socket for them. Take care.
 
-/// Implementations for primitives `XskRing`, `XskRingProd`, `XskRingCons`.
-mod ring;
-
 /// Implementations for interface related operations.
 mod iface;
+/// Implementations for primitives `XskRing`, `XskRingProd`, `XskRingCons`.
+mod ring;
+/// Implementations for sockets.
+mod socket;
+/// Implementation for memory management.
+mod umem;
 
-use crate::xdp::{XdpMmapOffsets, XdpUmemReg};
+use crate::xdp::XdpMmapOffsets;
 
 use alloc::sync::Arc;
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicU32;
 
-struct SocketFd(libc::c_int);
+pub(crate) struct SocketFd(libc::c_int);
 
 /// Internal structure shared for all rings.
 ///
@@ -87,6 +90,20 @@ pub struct XskUmem {
     umem_area: NonNull<[u8]>,
     config: XskUmemConfig,
     fd: Arc<SocketFd>,
+    devices: XskDeviceControl,
+}
+
+#[derive(Clone)]
+struct XskDeviceControl {
+    /// The tracker, not critical for memory safety (here anyways) but correctness.
+    inner: Arc<dyn ControlSet>,
+}
+
+/// A synchronized set for tracking which `IfCtx` are taken.
+trait ControlSet: Send + Sync + 'static {
+    fn insert(&self, _: IfCtx) -> bool;
+    fn contains(&self, _: &IfCtx) -> bool;
+    fn remove(&self, _: &IfCtx);
 }
 
 /// One prepared socket for a receive/transmit pair.
@@ -107,6 +124,8 @@ pub struct XskDevice {
     fcq: XskDeviceRings,
     /// This is also a socket.
     socket: XskSocket,
+    /// Reference to de-register.
+    devices: XskDeviceControl,
 }
 
 /// A receiver queue.
@@ -134,7 +153,7 @@ pub struct IfInfo {
     ifname: [libc::c_char; libc::IFNAMSIZ],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IfCtx {
     ifindex: libc::c_uint,
     queue_id: u32,
@@ -146,10 +165,10 @@ pub struct IfCtx {
 pub struct XskDeviceRings {
     pub prod: XskRingProd,
     pub cons: XskRingCons,
-    map: SocketMmapOffsets,
+    pub(crate) map: SocketMmapOffsets,
 }
 
-struct SocketMmapOffsets {
+pub(crate) struct SocketMmapOffsets {
     inner: XdpMmapOffsets,
 }
 
@@ -191,146 +210,6 @@ pub struct XskRingProd {
 pub struct XskRingCons {
     inner: XskRing,
     mmap_addr: NonNull<[u8]>,
-}
-
-impl XskUmem {
-    /* Socket options for XDP */
-    const XDP_MMAP_OFFSETS: libc::c_int = 1;
-    const XDP_RX_RING: libc::c_int = 2;
-    const XDP_TX_RING: libc::c_int = 3;
-    const XDP_UMEM_REG: libc::c_int = 4;
-    const XDP_UMEM_FILL_RING: libc::c_int = 5;
-    const XDP_UMEM_COMPLETION_RING: libc::c_int = 6;
-    const XDP_STATISTICS: libc::c_int = 7;
-    const XDP_OPTIONS: libc::c_int = 8;
-
-    /// Create a new Umem ring.
-    ///
-    /// # Safety
-    ///
-    /// The caller passes an area denoting the memory of the ring. It must be valid for the
-    /// indicated buffer size and count. The caller is also responsible for keeping the mapping
-    /// alive.
-    pub unsafe fn new(config: XskUmemConfig, area: NonNull<[u8]>) -> Result<XskUmem, libc::c_int> {
-        fn is_page_aligned(area: NonNull<[u8]>) -> bool {
-            let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
-            // TODO: use `addr()` as we don't need to expose the pointer here. Just the address as
-            // an integer and no provenance-preserving cast intended.
-            (area.as_ptr() as *mut u8 as usize & (page_size - 1)) == 0
-        }
-
-        debug_assert!(
-            is_page_aligned(area),
-            "UB: Bad mmap area provided, but caller is responsible for its soundness."
-        );
-
-        // Two steps:
-        // 1. Create a new XDP socket in the kernel.
-        // 2. Configure it with the area and size.
-        // Safety: correct `socket` call.
-        let umem = XskUmem {
-            config,
-            fd: Arc::new(SocketFd::new()?),
-            umem_area: area,
-        };
-
-        Self::configure(&umem)?;
-        Ok(umem)
-    }
-
-    fn configure(this: &XskUmem) -> Result<(), libc::c_int> {
-        let mut mr = XdpUmemReg::default();
-        mr.addr = this.umem_area.as_ptr() as *mut u8 as u64;
-        mr.len = ptr_len(this.umem_area.as_ptr()) as u64;
-        mr.chunk_size = this.config.frame_size;
-        mr.headroom = this.config.headroom;
-        mr.flags = this.config.flags;
-
-        let err = unsafe {
-            libc::setsockopt(
-                this.fd.0,
-                libc::SOL_XDP,
-                Self::XDP_UMEM_REG,
-                (&mut mr) as *mut _ as *mut libc::c_void,
-                core::mem::size_of_val(&mr) as libc::socklen_t,
-            )
-        };
-
-        if err != 0 {
-            return Err(err);
-        }
-
-        Ok(())
-    }
-
-    /// Map the fill and completion queue of this ring for a device.
-    ///
-    /// The caller _should_ only call this once for each ring. However, it's not entirely incorrect
-    /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
-    /// code is written under the assumption that only one controller/writer for the user-space
-    /// portions of each queue is active at a time. The kernel won't care about your broken code.
-    pub fn fq_cq(&mut self, interface: &XskSocket) -> Result<XskDevice, libc::c_int> {
-        todo!()
-    }
-
-    /// Configure the device address for a socket.
-    ///
-    /// Note: if the underlying socket is shared then this will also associate other sockets, this
-    /// is intended.
-    pub fn bind(
-        &mut self,
-        interface: &XskSocket,
-        sock: &XskSocketConfig,
-    ) -> Result<XskSocket, libc::c_int> {
-        todo!()
-    }
-}
-
-impl XskSocket {
-    const SO_NETNS_COOKIE: libc::c_int = 71;
-    const INIT_NS: u64 = 1;
-
-    pub fn new(interface: &IfInfo) -> Result<Self, libc::c_int> {
-        let fd = Arc::new(SocketFd::new()?);
-        Self::with_xdp_socket(interface, fd)
-    }
-
-    /// Create a socket using the FD of the `umem`.
-    ///
-    /// # Safety
-    ///
-    /// It's *not* (memory-)unsafe to run this twice with different interfaces but it's also
-    /// incorrect. Please don't.
-    pub fn with_shared(interface: &IfInfo, umem: &XskUmem) -> Result<Self, libc::c_int> {
-        Self::with_xdp_socket(interface, umem.fd.clone())
-    }
-
-    fn with_xdp_socket(interface: &IfInfo, fd: Arc<SocketFd>) -> Result<Self, libc::c_int> {
-        let mut info = Arc::new(interface.clone());
-
-        let mut netnscookie: u64 = 0;
-        let mut optlen: libc::socklen_t = core::mem::size_of_val(&netnscookie) as libc::socklen_t;
-        let err = unsafe {
-            libc::getsockopt(
-                fd.0,
-                libc::SOL_SOCKET,
-                Self::SO_NETNS_COOKIE,
-                (&mut netnscookie) as *mut _ as *mut libc::c_void,
-                &mut optlen,
-            )
-        };
-
-        match err {
-            0 => {}
-            libc::ENOPROTOOPT => netnscookie = Self::INIT_NS,
-            err => return Err(err),
-        }
-
-        // Won't reallocate in practice.
-        Arc::make_mut(&mut info).ctx.netnscookie = netnscookie;
-
-        Ok(XskSocket { fd, info })
-    }
 }
 
 impl SocketFd {

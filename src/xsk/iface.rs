@@ -48,7 +48,13 @@ impl SocketMmapOffsets {
     const OPT_V1: libc::socklen_t = core::mem::size_of::<XdpMmapOffsetsV1>() as libc::socklen_t;
     const OPT_LATEST: libc::socklen_t = core::mem::size_of::<XdpMmapOffsets>() as libc::socklen_t;
 
-    pub fn from_fd(&mut self, fd: libc::c_int) -> Result<(), libc::c_int> {
+    pub fn new(fd: libc::c_int) -> Result<Self, libc::c_int> {
+        let mut this = SocketMmapOffsets { inner: Default::default() };
+        this.set_from_fd(fd)?;
+        Ok(this)
+    }
+
+    pub fn set_from_fd(&mut self, fd: libc::c_int) -> Result<(), libc::c_int> {
         use crate::xdp::{XdpRingOffsets, XdpRingOffsetsV1};
 
         // The flags was implicit, based on the consumer.

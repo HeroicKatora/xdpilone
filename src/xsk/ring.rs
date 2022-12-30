@@ -2,9 +2,14 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::xdp::{XdpDesc, XdpRingOffsets};
-use crate::xsk::{BufIdx, XskRing, XskRingCons, XskRingProd};
+use crate::xsk::{BufIdx, SocketFd, SocketMmapOffsets, XskRing, XskRingCons, XskRingProd};
 
 impl XskRing {
+    const XDP_PGOFF_RX_RING: libc::off_t = 0;
+    const XDP_PGOFF_TX_RING: libc::off_t = 0x80000000;
+    const XDP_UMEM_PGOFF_FILL_RING: libc::off_t = 0x100000000;
+    const XDP_UMEM_PGOFF_COMPLETION_RING: libc::off_t = 0x180000000;
+
     /// Construct a ring from an mmap given by the kernel.
     ///
     /// # Safety
@@ -38,9 +43,82 @@ impl XskRing {
             cached_consumer: consumer.load(Ordering::Relaxed),
         }
     }
+
+    unsafe fn map(
+        fd: &SocketFd,
+        off: &XdpRingOffsets,
+        count: u32,
+        sz: u64,
+        offset: libc::off_t,
+    ) -> Result<(Self, NonNull<[u8]>), libc::c_int> {
+        let len = (off.desc + u64::from(count) * sz) as usize;
+
+        let mmap = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED | libc::MAP_POPULATE,
+                fd.0,
+                offset,
+            )
+        };
+
+        if mmap == libc::MAP_FAILED {
+            return Err(unsafe { *libc::__errno_location() });
+        }
+
+        assert!(!mmap.is_null());
+        // Safety: as by MMap this pointer is valid.
+        let mmap_addr = core::ptr::slice_from_raw_parts_mut(mmap as *mut u8, len);
+        let mmap_addr = unsafe { NonNull::new_unchecked(mmap_addr) };
+        let nn = mmap_addr.cast();
+
+        Ok((XskRing::new(nn, off, count), mmap_addr))
+    }
 }
 
 impl XskRingProd {
+    /// # Safety
+    ///
+    /// The caller must only pass `fd` and `off` if they correspond as they were returned by the
+    /// kernel.
+    pub(crate) unsafe fn fill(
+        fd: &SocketFd,
+        off: &SocketMmapOffsets,
+        count: u32,
+    ) -> Result<Self, libc::c_int> {
+        let (inner, mmap_addr) = XskRing::map(
+            fd,
+            &off.inner.fr,
+            count,
+            core::mem::size_of::<u64>() as u64,
+            XskRing::XDP_UMEM_PGOFF_FILL_RING,
+        )?;
+
+        Ok(XskRingProd { inner, mmap_addr })
+    }
+
+    /// # Safety
+    ///
+    /// The caller must only pass `fd` and `off` if they correspond as they were returned by the
+    /// kernel.
+    pub(crate) unsafe fn tx(
+        fd: &SocketFd,
+        off: &SocketMmapOffsets,
+        count: u32,
+    ) -> Result<Self, libc::c_int> {
+        let (inner, mmap_addr) = XskRing::map(
+            fd,
+            &off.inner.tx,
+            count,
+            core::mem::size_of::<XdpDesc>() as u64,
+            XskRing::XDP_PGOFF_TX_RING,
+        )?;
+
+        Ok(XskRingProd { inner, mmap_addr })
+    }
+
     pub unsafe fn fill_addr(&self, idx: BufIdx) -> NonNull<u64> {
         let offset = (idx.0 & self.inner.mask) as isize;
         let base = self.inner.ring.cast::<u64>().as_ptr();
@@ -114,6 +192,47 @@ impl XskRingProd {
 }
 
 impl XskRingCons {
+    /// Create a completion ring.
+    /// # Safety
+    ///
+    /// The caller must only pass `fd` and `off` if they correspond as they were returned by the
+    /// kernel.
+    pub(crate) unsafe fn comp(
+        fd: &SocketFd,
+        off: &SocketMmapOffsets,
+        count: u32,
+    ) -> Result<Self, libc::c_int> {
+        let (inner, mmap_addr) = XskRing::map(
+            fd,
+            &off.inner.cr,
+            count,
+            core::mem::size_of::<u64>() as u64,
+            XskRing::XDP_UMEM_PGOFF_COMPLETION_RING,
+        )?;
+
+        Ok(XskRingCons { inner, mmap_addr })
+    }
+
+    /// Create a receive ring.
+    /// # Safety
+    ///
+    /// The caller must only pass `fd` and `off` if they correspond as they were returned by the
+    /// kernel.
+    pub(crate) unsafe fn rx(
+        fd: &SocketFd,
+        off: &SocketMmapOffsets,
+        count: u32,
+    ) -> Result<Self, libc::c_int> {
+        let (inner, mmap_addr) = XskRing::map(
+            fd,
+            &off.inner.rx,
+            count,
+            core::mem::size_of::<XdpDesc>() as u64,
+            XskRing::XDP_PGOFF_RX_RING,
+        )?;
+
+        Ok(XskRingCons { inner, mmap_addr })
+    }
     pub unsafe fn comp_addr(&self, idx: BufIdx) -> NonNull<u64> {
         let offset = (idx.0 & self.inner.mask) as isize;
         let base = self.inner.ring.cast::<u64>().as_ptr();

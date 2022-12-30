@@ -5,6 +5,10 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
+# For exclusion of multiple devices on the same queue.
+[dependencies.spin]
+version = "0.9"
+features = ["rwlock"]
 
 [dev-dependencies.clap]
 version = "4"
