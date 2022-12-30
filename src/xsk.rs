@@ -6,12 +6,18 @@
 //!
 //! The data structures here are not *safe* to construct. Some of them depend on the caller to
 //! uphold guarantees such as keeping an mmap alive, or holding onto a socket for them. Take care.
-use crate::xdp::{XdpDesc, XdpUmemReg};
 
-use alloc::boxed::Box;
+/// Implementations for primitives `XskRing`, `XskRingProd`, `XskRingCons`.
+mod ring;
+
+/// Implementations for interface related operations.
+mod iface;
+
+use crate::xdp::{XdpMmapOffsets, XdpUmemReg};
+
 use alloc::sync::Arc;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 
 struct SocketFd(libc::c_int);
 
@@ -107,7 +113,7 @@ pub struct XskDevice {
 ///
 /// This also maintains the mmap of the associated queue.
 pub struct XskRxRing {
-    ring: XskRing,
+    ring: XskRingCons,
     fd: Arc<SocketFd>,
 }
 
@@ -115,7 +121,7 @@ pub struct XskRxRing {
 ///
 /// This also maintains the mmap of the associated queue.
 pub struct XskTxRing {
-    ring: XskRing,
+    ring: XskRingProd,
     fd: Arc<SocketFd>,
 }
 
@@ -124,35 +130,27 @@ pub struct XskTxRing {
 /// Please allocate this, the struct is quite large. Put it into an `Arc` since it is not mutable.
 #[derive(Clone, Copy)]
 pub struct IfInfo {
-    ifindex: u32,
+    ctx: IfCtx,
+    ifname: [libc::c_char; libc::IFNAMSIZ],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+pub struct IfCtx {
+    ifindex: libc::c_uint,
     queue_id: u32,
     /// The namespace cookie, associated with a *socket*.
     /// This field is filled by some surrounding struct containing the info.
     netnscookie: u64,
-    ifname: [libc::c_char; libc::IFNAMSIZ],
-}
-
-struct XdpRingOffsets {
-    pub producer: u64,
-    pub consumer: u64,
-    pub desc: u64,
-    pub flags: u64,
-}
-
-/// The offsets as returned by the kernel.
-struct SocketMmapOffsets {
-    pub rx: XdpRingOffsets,
-    pub tx: XdpRingOffsets,
-    /// Fill ring offset.
-    pub fr: XdpRingOffsets,
-    /// Completion ring offset.
-    pub cr: XdpRingOffsets,
 }
 
 pub struct XskDeviceRings {
-    pub prod: Box<XskRingProd>,
-    pub cons: Box<XskRingCons>,
+    pub prod: XskRingProd,
+    pub cons: XskRingCons,
     map: SocketMmapOffsets,
+}
+
+struct SocketMmapOffsets {
+    inner: XdpMmapOffsets,
 }
 
 /// An index to an XDP buffer.
@@ -183,6 +181,7 @@ pub struct BufIdx(pub u32);
 #[derive(Debug)]
 pub struct XskRingProd {
     inner: XskRing,
+    mmap_addr: NonNull<[u8]>,
 }
 
 /// A consumer ring.
@@ -191,166 +190,12 @@ pub struct XskRingProd {
 #[derive(Debug)]
 pub struct XskRingCons {
     inner: XskRing,
-}
-
-impl XskRing {
-    /// Construct a ring from an mmap given by the kernel.
-    ///
-    /// # Safety
-    ///
-    /// The caller is responsible for ensuring that the memory mapping is valid, and **outlives**
-    /// the ring itself. Please attach a reference counted pointer to the controller or something
-    /// of that sort.
-    ///
-    /// The caller must ensure that the memory region is not currently mutably aliased. That's
-    /// wrong anyways because the kernel may write to it, i.e. it is not immutable! A shared
-    /// aliasing is okay.
-    pub unsafe fn new() -> Self {
-        todo!()
-    }
-}
-
-impl XskRingProd {
-    pub unsafe fn fill_addr(&self, idx: BufIdx) -> NonNull<u64> {
-        let offset = (idx.0 & self.inner.mask) as isize;
-        let base = self.inner.ring.cast::<u64>().as_ptr();
-        unsafe { NonNull::new_unchecked(base.offset(offset)) }
-    }
-
-    pub unsafe fn tx_desc(&self, idx: BufIdx) -> NonNull<XdpDesc> {
-        let offset = (idx.0 & self.inner.mask) as isize;
-        let base = self.inner.ring.cast::<XdpDesc>().as_ptr();
-        unsafe { NonNull::new_unchecked(base.offset(offset)) }
-    }
-
-    /// Query for up to `nb` free entries.
-    ///
-    /// Serves small requests based on cached state about the kernel's consumer head. Large
-    /// requests may thus incur an extra refresh of the consumer head.
-    pub fn count_free(&mut self, nb: u32) -> u32 {
-        let free_entries = self
-            .inner
-            .cached_consumer
-            .wrapping_sub(self.inner.cached_producer);
-
-        if free_entries >= nb {
-            return free_entries;
-        }
-
-        self.inner.cached_consumer = self.inner.consumer.load(Ordering::Acquire);
-        // No-op module the size, but ensures our view of the consumer is always ahead of the
-        // producer, no matter buffer counts and mask.
-        // TODO: actually, I don't _quite_ understand. This algorithm is copied from libxdp.
-        self.inner.cached_consumer += self.inner.size;
-
-        self.inner.cached_consumer - self.inner.cached_producer
-    }
-
-    /// Prepare consuming some buffers on our-side, not submitting to the kernel yet.
-    ///
-    /// Writes the index of the next available buffer into `idx`. Fails if less than the requested
-    /// amount of buffers can be reserved.
-    pub fn reserve(&mut self, nb: u32, idx: &mut BufIdx) -> u32 {
-        if self.count_free(nb) < nb {
-            return 0;
-        }
-
-        *idx = BufIdx(self.inner.cached_producer);
-        self.inner.cached_producer += nb;
-
-        nb
-    }
-
-    /// Cancel a previous `reserve`.
-    ///
-    /// If passed a smaller number, the remaining reservation stays active.
-    pub fn cancel(&mut self, nb: u32) {
-        self.inner.cached_producer -= nb;
-    }
-
-    /// Submit a number of buffers.
-    ///
-    /// Note: the client side state is _not_ adjusted. If you've called `reserve` before please
-    /// check to maintain a consistent view.
-    pub fn submit(&mut self, nb: u32) {
-        // We are the only writer, all other writes are ordered before.
-        let cur = self.inner.producer.load(Ordering::Relaxed);
-        // When the kernel reads it, all writes to buffers must be ordered before this write to the
-        // head, this represents the memory synchronization edge.
-        self.inner
-            .producer
-            .store(cur.wrapping_add(nb), Ordering::Release);
-    }
-}
-
-impl XskRingCons {
-    pub unsafe fn comp_addr(&self, idx: BufIdx) -> NonNull<u64> {
-        let offset = (idx.0 & self.inner.mask) as isize;
-        let base = self.inner.ring.cast::<u64>().as_ptr();
-        unsafe { NonNull::new_unchecked(base.offset(offset)) }
-    }
-
-    pub unsafe fn rx_desc(&self, idx: BufIdx) -> NonNull<XdpDesc> {
-        let offset = (idx.0 & self.inner.mask) as isize;
-        let base = self.inner.ring.cast::<XdpDesc>().as_ptr();
-        unsafe { NonNull::new_unchecked(base.offset(offset)) }
-    }
-
-    /// Find the number of available entries.
-    pub fn count_available(&mut self, nb: u32) -> u32 {
-        let mut available = self
-            .inner
-            .cached_producer
-            .wrapping_sub(self.inner.cached_consumer);
-
-        if available == 0 {
-            self.inner.cached_producer = self.inner.producer.load(Ordering::Acquire);
-            available = self
-                .inner
-                .cached_producer
-                .wrapping_sub(self.inner.cached_consumer);
-        }
-
-        // TODO: huh, this being the only use is pretty weird. Sure, in `peek` we may want to pace
-        // our logical consumption of buffers but then it could perform its own `min`? The
-        // symmetry to `RingProd` is lost anyways due to the difference in when we refresh our
-        // producer cache, right?
-        available.min(nb)
-    }
-
-    pub fn peek(&mut self, nb: u32, idx: &mut BufIdx) -> u32 {
-        let count = self.count_available(nb);
-
-        if count == 0 {
-            return 0;
-        }
-
-        *idx = BufIdx(self.inner.cached_consumer);
-        self.inner.cached_consumer += count;
-
-        count
-    }
-
-    /// Cancel a previous `peek`.
-    ///
-    /// If passed a smaller number, the remaining reservation stays active.
-    pub fn cancel(&mut self, nb: u32) {
-        self.inner.cached_consumer -= nb;
-    }
-
-    pub fn release(&mut self, nb: u32) {
-        // We are the only writer, all other writes are ordered before.
-        let cur = self.inner.consumer.load(Ordering::Relaxed);
-        // All our reads from buffers must be ordered before this write to the head, this
-        // represents the memory synchronization edge.
-        self.inner
-            .consumer
-            .store(cur.wrapping_add(nb), Ordering::Release);
-    }
+    mmap_addr: NonNull<[u8]>,
 }
 
 impl XskUmem {
     /* Socket options for XDP */
+    const XDP_MMAP_OFFSETS: libc::c_int = 1;
     const XDP_RX_RING: libc::c_int = 2;
     const XDP_TX_RING: libc::c_int = 3;
     const XDP_UMEM_REG: libc::c_int = 4;
@@ -394,12 +239,6 @@ impl XskUmem {
     }
 
     fn configure(this: &XskUmem) -> Result<(), libc::c_int> {
-        // FIXME: pending stabilization, use pointer::len directly.
-        // <https://doc.rust-lang.org/stable/std/primitive.pointer.html#method.len>
-        fn ptr_len(ptr: *mut [u8]) -> usize {
-            unsafe { (*(ptr as *mut [()])).len() }
-        }
-
         let mut mr = XdpUmemReg::default();
         mr.addr = this.umem_area.as_ptr() as *mut u8 as u64;
         mr.len = ptr_len(this.umem_area.as_ptr()) as u64;
@@ -488,7 +327,7 @@ impl XskSocket {
         }
 
         // Won't reallocate in practice.
-        Arc::make_mut(&mut info).netnscookie = netnscookie;
+        Arc::make_mut(&mut info).ctx.netnscookie = netnscookie;
 
         Ok(XskSocket { fd, info })
     }
@@ -520,4 +359,10 @@ impl Drop for SocketFd {
     fn drop(&mut self) {
         let _ = unsafe { libc::close(self.0) };
     }
+}
+
+// FIXME: pending stabilization, use pointer::len directly.
+// <https://doc.rust-lang.org/stable/std/primitive.pointer.html#method.len>
+fn ptr_len(ptr: *mut [u8]) -> usize {
+    unsafe { (*(ptr as *mut [()])).len() }
 }
