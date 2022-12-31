@@ -168,7 +168,7 @@ impl XskUmem {
             return Err(unsafe { *libc::__errno_location() });
         }
 
-        todo!()
+        Ok(())
     }
 }
 
