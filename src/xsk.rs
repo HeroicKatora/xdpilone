@@ -19,8 +19,8 @@ mod umem;
 use crate::xdp::XdpMmapOffsets;
 
 use alloc::sync::Arc;
-use core::{num::NonZeroU32, ptr::NonNull};
 use core::sync::atomic::AtomicU32;
+use core::{num::NonZeroU32, ptr::NonNull};
 
 pub(crate) struct SocketFd(libc::c_int);
 
@@ -55,6 +55,7 @@ struct XskRing {
     flags: NonNull<u32>,
 }
 
+#[derive(Debug, Clone)]
 pub struct XskUmemConfig {
     /// Number of entries in the fill queue.
     pub fill_size: u32,
@@ -68,6 +69,7 @@ pub struct XskUmemConfig {
     pub flags: u32,
 }
 
+#[derive(Debug, Default, Clone)]
 pub struct XskSocketConfig {
     pub rx_size: Option<NonZeroU32>,
     pub tx_size: Option<NonZeroU32>,
@@ -82,7 +84,7 @@ pub struct XskSocketConfig {
 /// The basic Umem descriptor.
 ///
 /// Compared to `libxdp` there no link to the queues is stored. Such a struct would necessitate
-/// thread-safe access to the ring's producer and consumer queues. Instead, a `XskDevice` is the
+/// thread-safe access to the ring's producer and consumer queues. Instead, a `XskDeviceQueue` is the
 /// owner of a device queue's fill/completion ring, but _not_ receive and transmission rings. All
 /// other sockets with the same interface/queue depend on it but have their own packet rings.
 ///
@@ -127,13 +129,27 @@ pub struct XskSocket {
 /// A socket is more specifically a set of receive and transmit queues for packets (mapping to some
 /// underlying hardware mapping those bytes with a network). The fill and completion queue can, in
 /// theory, be shared with other sockets of the same `Umem`.
-pub struct XskDevice {
+pub struct XskDeviceQueue {
     /// Fill and completion queues.
     fcq: XskDeviceRings,
     /// This is also a socket.
     socket: XskSocket,
     /// Reference to de-register.
     devices: XskDeviceControl,
+}
+
+/// An owner of receive/transmit queues.
+///
+/// This represents a _bound_ and configured version of the raw `XskSocket`.
+///
+/// FIXME: name is somewhat suboptimal?
+pub struct XskUser {
+    /// A clone of the socket it was created from.
+    socket: XskSocket,
+    /// The configuration with which it was created.
+    config: Arc<XskSocketConfig>,
+    /// A cached version of the map describing receive/tranmit queues.
+    map: SocketMmapOffsets,
 }
 
 /// A receiver queue.

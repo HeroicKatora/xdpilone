@@ -6,11 +6,13 @@ use alloc::sync::Arc;
 use crate::Errno;
 use crate::xdp::{SockAddrXdp, XdpUmemReg};
 use crate::xsk::{
-    ptr_len, IfCtx, SocketFd, SocketMmapOffsets, XskDevice, XskDeviceControl, XskDeviceRings,
+    ptr_len, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceQueue, XskDeviceControl, XskDeviceRings,
     XskRingCons, XskRingProd, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig,
 };
 
 use spin::RwLock;
+
+use super::XskUser;
 
 impl XskUmem {
     /* Socket options for XDP */
@@ -93,7 +95,7 @@ impl XskUmem {
     /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
     /// code is written under the assumption that only one controller/writer for the user-space
     /// portions of each queue is active at a time. The kernel won't care about your broken code.
-    pub fn fq_cq(&mut self, interface: &XskSocket) -> Result<XskDevice, Errno> {
+    pub fn fq_cq(&mut self, interface: &XskSocket) -> Result<XskDeviceQueue, Errno> {
         if !self.devices.insert(interface.info.ctx) {
             return Err(Errno(libc::EINVAL));
         }
@@ -117,7 +119,7 @@ impl XskUmem {
         let prod = unsafe { XskRingProd::fill(sock, &map, self.config.fill_size)? };
         let cons = unsafe { XskRingCons::comp(sock, &map, self.config.complete_size)? };
 
-        let device = XskDevice {
+        let device = XskDeviceQueue {
             fcq: XskDeviceRings { map, cons, prod },
             socket: XskSocket {
                 info: interface.info.clone(),
@@ -141,7 +143,7 @@ impl XskUmem {
         &mut self,
         interface: &XskSocket,
         config: &XskSocketConfig,
-    ) -> Result<(), Errno> {
+    ) -> Result<XskUser, Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.info.ctx.ifindex,
             queue_id: interface.info.ctx.queue_id,
@@ -150,6 +152,7 @@ impl XskUmem {
 
         let sock = &*interface.fd;
         Self::configure_rt(sock, config)?;
+        let map = SocketMmapOffsets::new(sock.0)?;
 
         // FIXME: `XDP_SHARED_UMEM`.
         // sxdp.sxdp_flags |= XDP_SHARED_UMEM;
@@ -167,7 +170,14 @@ impl XskUmem {
             return Err(Errno::new());
         }
 
-        Ok(())
+        Ok(XskUser {
+            socket: XskSocket {
+                info: interface.info.clone(),
+                fd: interface.fd.clone(),
+            },
+            config: Arc::new(config.clone()),
+            map,
+        })
     }
 
     pub(crate) fn configure_cq(fd: &SocketFd, config: &XskUmemConfig) -> Result<(), Errno> {
@@ -235,7 +245,7 @@ impl XskUmem {
     }
 }
 
-impl XskDevice {
+impl XskDeviceQueue {
     pub fn setup_xdp_prog(&mut self) -> Result<(), libc::c_int> {
         todo!()
     }

@@ -25,11 +25,13 @@ fn main() {
     };
 
     let sock = XskSocket::with_shared(&info, &umem).unwrap();
+    // The fill/completion queue.
     let device = umem.fq_cq(&sock).unwrap();
 
-    umem.bind(&sock, &XskSocketConfig {
+    // The receive/transmit queue.
+    let rxtx = umem.bind(&sock, &XskSocketConfig {
         rx_size: NonZeroU32::new(16),
-        tx_size: NonZeroU32::new(16),
+        tx_size: None,
         lib_flags: 0,
         xdp_flags: 0,
         bind_flags: 0,
