@@ -1,7 +1,7 @@
 use core::ffi::CStr;
 
 use super::{IfCtx, IfInfo, SocketMmapOffsets};
-use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1};
+use crate::{xdp::{XdpMmapOffsets, XdpMmapOffsetsV1}, Errno};
 
 impl IfInfo {
     pub fn invalid() -> Self {
@@ -48,13 +48,13 @@ impl SocketMmapOffsets {
     const OPT_V1: libc::socklen_t = core::mem::size_of::<XdpMmapOffsetsV1>() as libc::socklen_t;
     const OPT_LATEST: libc::socklen_t = core::mem::size_of::<XdpMmapOffsets>() as libc::socklen_t;
 
-    pub fn new(fd: libc::c_int) -> Result<Self, libc::c_int> {
+    pub fn new(fd: libc::c_int) -> Result<Self, Errno> {
         let mut this = SocketMmapOffsets { inner: Default::default() };
         this.set_from_fd(fd)?;
         Ok(this)
     }
 
-    pub fn set_from_fd(&mut self, fd: libc::c_int) -> Result<(), libc::c_int> {
+    pub fn set_from_fd(&mut self, fd: libc::c_int) -> Result<(), Errno> {
         use crate::xdp::{XdpRingOffsets, XdpRingOffsetsV1};
 
         // The flags was implicit, based on the consumer.
@@ -79,7 +79,7 @@ impl SocketMmapOffsets {
         let err = unsafe {
             libc::getsockopt(
                 fd,
-                libc::SOL_XDP,
+                super::SOL_XDP,
                 super::XskUmem::XDP_MMAP_OFFSETS,
                 (&mut off) as *mut _ as *mut libc::c_void,
                 &mut optlen,
@@ -87,7 +87,7 @@ impl SocketMmapOffsets {
         };
 
         if err != 0 {
-            return Err(err);
+            return Err(Errno::new());
         }
 
         match optlen {
@@ -107,7 +107,7 @@ impl SocketMmapOffsets {
                 self.inner = unsafe { off.latest };
                 Ok(())
             }
-            _ => Err(-libc::EINVAL),
+            _ => Err(Errno(-libc::EINVAL)),
         }
     }
 }

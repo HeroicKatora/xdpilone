@@ -19,10 +19,14 @@ mod umem;
 use crate::xdp::XdpMmapOffsets;
 
 use alloc::sync::Arc;
-use core::ptr::NonNull;
+use core::{num::NonZeroU32, ptr::NonNull};
 use core::sync::atomic::AtomicU32;
 
 pub(crate) struct SocketFd(libc::c_int);
+
+/// Not defined in all libc versions and a _system_ property, not an implementation property. Thus
+/// we define it ourselves here.
+pub(crate) const SOL_XDP: libc::c_int = 283;
 
 /// Internal structure shared for all rings.
 ///
@@ -65,10 +69,14 @@ pub struct XskUmemConfig {
 }
 
 pub struct XskSocketConfig {
-    pub rx_size: u32,
-    pub tx_size: u32,
-    pub flags: u32,
+    pub rx_size: Option<NonZeroU32>,
+    pub tx_size: Option<NonZeroU32>,
+    /// Flags to pass on to libxdp/libbpf.
+    /// FIXME: but we're not using them?
+    #[allow(dead_code)]
+    pub lib_flags: u32,
     pub xdp_flags: u32,
+    pub bind_flags: u16,
 }
 
 /// The basic Umem descriptor.
@@ -168,6 +176,7 @@ pub struct XskDeviceRings {
     pub(crate) map: SocketMmapOffsets,
 }
 
+#[derive(Debug)]
 pub(crate) struct SocketMmapOffsets {
     inner: XdpMmapOffsets,
 }

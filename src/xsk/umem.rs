@@ -3,7 +3,8 @@ use core::ptr::NonNull;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
-use crate::xdp::XdpUmemReg;
+use crate::Errno;
+use crate::xdp::{SockAddrXdp, XdpUmemReg};
 use crate::xsk::{
     ptr_len, IfCtx, SocketFd, SocketMmapOffsets, XskDevice, XskDeviceControl, XskDeviceRings,
     XskRingCons, XskRingProd, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig,
@@ -72,7 +73,7 @@ impl XskUmem {
         let err = unsafe {
             libc::setsockopt(
                 this.fd.0,
-                libc::SOL_XDP,
+                super::SOL_XDP,
                 Self::XDP_UMEM_REG,
                 (&mut mr) as *mut _ as *mut libc::c_void,
                 core::mem::size_of_val(&mr) as libc::socklen_t,
@@ -92,9 +93,9 @@ impl XskUmem {
     /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
     /// code is written under the assumption that only one controller/writer for the user-space
     /// portions of each queue is active at a time. The kernel won't care about your broken code.
-    pub fn fq_cq(&mut self, interface: &XskSocket) -> Result<XskDevice, libc::c_int> {
+    pub fn fq_cq(&mut self, interface: &XskSocket) -> Result<XskDevice, Errno> {
         if !self.devices.insert(interface.info.ctx) {
-            return Err(libc::EINVAL);
+            return Err(Errno(libc::EINVAL));
         }
 
         struct DropableDevice<'info>(&'info IfCtx, &'info XskDeviceControl);
@@ -108,11 +109,11 @@ impl XskUmem {
         // Okay, got a device. Let's create the queues for it. On failure, cleanup.
         let _tmp_device = DropableDevice(&interface.info.ctx, &self.devices);
 
-        Self::configure_cq(&*interface.fd, &self.config)?;
-
         let sock = &*interface.fd;
+        Self::configure_cq(sock, &self.config)?;
         let map = SocketMmapOffsets::new(sock.0)?;
 
+        // FIXME: review the cached values, really?
         let prod = unsafe { XskRingProd::fill(sock, &map, self.config.fill_size)? };
         let cons = unsafe { XskRingCons::comp(sock, &map, self.config.complete_size)? };
 
@@ -131,41 +132,103 @@ impl XskUmem {
 
     /// Configure the device address for a socket.
     ///
-    /// Note: if the underlying socket is shared then this will also associate other sockets, this
-    /// is intended.
+    /// Either `rx_size` or `tx_size` must be non-zero, i.e. the call to bind will fail if none of
+    /// the rings is actually configured.
+    ///
+    /// Note: if the underlying socket is shared then this will also bind other objects that share
+    /// the underlying socket file descriptor, this is intended.
     pub fn bind(
         &mut self,
         interface: &XskSocket,
-        sock: &XskSocketConfig,
-    ) -> Result<XskSocket, libc::c_int> {
-        todo!()
+        config: &XskSocketConfig,
+    ) -> Result<(), Errno> {
+        let mut sxdp = SockAddrXdp {
+            ifindex: interface.info.ctx.ifindex,
+            queue_id: interface.info.ctx.queue_id,
+            ..SockAddrXdp::default()
+        };
+
+        let sock = &*interface.fd;
+        Self::configure_rt(sock, config)?;
+
+        // FIXME: `XDP_SHARED_UMEM`.
+        // sxdp.sxdp_flags |= XDP_SHARED_UMEM;
+        // sxdp.sxdp_shared_umem_fd = umem->fd;
+        sxdp.flags = config.bind_flags;
+
+        if unsafe {
+            libc::bind(
+                interface.fd.0,
+                (&sxdp) as *const _ as *const libc::sockaddr,
+                core::mem::size_of_val(&sxdp) as libc::socklen_t,
+            )
+        } != 0
+        {
+            return Err(Errno::new());
+        }
+
+        Ok(())
     }
 
-    pub(crate) fn configure_cq(fd: &SocketFd, config: &XskUmemConfig) -> Result<(), libc::c_int> {
+    pub(crate) fn configure_cq(fd: &SocketFd, config: &XskUmemConfig) -> Result<(), Errno> {
         if unsafe {
             libc::setsockopt(
                 fd.0,
-                libc::SOL_XDP,
+                super::SOL_XDP,
                 XskUmem::XDP_UMEM_COMPLETION_RING,
                 (&config.complete_size) as *const _ as *const libc::c_void,
                 core::mem::size_of_val(&config.complete_size) as libc::socklen_t,
             )
         } != 0
         {
-            return Err(unsafe { *libc::__errno_location() });
+            return Err(Errno::new());
         }
 
         if unsafe {
             libc::setsockopt(
                 fd.0,
-                libc::SOL_XDP,
+                super::SOL_XDP,
                 XskUmem::XDP_UMEM_FILL_RING,
                 (&config.fill_size) as *const _ as *const libc::c_void,
                 core::mem::size_of_val(&config.fill_size) as libc::socklen_t,
             )
         } != 0
         {
-            return Err(unsafe { *libc::__errno_location() });
+            return Err(Errno::new());
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn configure_rt(fd: &SocketFd, config: &XskSocketConfig) -> Result<(), Errno> {
+        if let Some(num) = config.rx_size {
+            if unsafe {
+                libc::setsockopt(
+                    fd.0,
+                    super::SOL_XDP,
+                    XskUmem::XDP_RX_RING,
+                    (&num) as *const _ as *const libc::c_void,
+                    core::mem::size_of_val(&num) as libc::socklen_t,
+                )
+            } != 0
+            {
+                return Err(Errno::new());
+            }
+        }
+
+        if let Some(num) = config.tx_size {
+            if unsafe {
+                libc::setsockopt(
+                    fd.0,
+                    super::SOL_XDP,
+                    XskUmem::XDP_TX_RING,
+                    (&num) as *const _ as *const libc::c_void,
+                    core::mem::size_of_val(&num) as libc::socklen_t,
+                )
+            } != 0
+            {
+                return Err(Errno::new());
+            }
         }
 
         Ok(())

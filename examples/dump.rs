@@ -1,5 +1,5 @@
 use core::cell::UnsafeCell;
-use core::{mem::MaybeUninit, ptr::NonNull};
+use core::{num::NonZeroU32, ptr::NonNull};
 use xdp_ral::xsk::{IfInfo, XskSocket, XskUmem, XskUmemConfig, XskSocketConfig};
 
 // We can use _any_ data mapping.
@@ -24,14 +24,15 @@ fn main() {
         info
     };
 
-    let sock = XskSocket::new(&info).unwrap();
+    let sock = XskSocket::with_shared(&info, &umem).unwrap();
     let device = umem.fq_cq(&sock).unwrap();
 
     umem.bind(&sock, &XskSocketConfig {
-        rx_size: 2048,
-        tx_size: 2048,
-        flags: 0,
+        rx_size: NonZeroU32::new(16),
+        tx_size: NonZeroU32::new(16),
+        lib_flags: 0,
         xdp_flags: 0,
+        bind_flags: 0,
     }).unwrap();
 
     eprintln!("Success!");

@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use crate::Errno;
 use crate::xdp::{XdpDesc, XdpRingOffsets};
 use crate::xsk::{BufIdx, SocketFd, SocketMmapOffsets, XskRing, XskRingCons, XskRingProd};
 
@@ -50,7 +51,7 @@ impl XskRing {
         count: u32,
         sz: u64,
         offset: libc::off_t,
-    ) -> Result<(Self, NonNull<[u8]>), libc::c_int> {
+    ) -> Result<(Self, NonNull<[u8]>), Errno> {
         let len = (off.desc + u64::from(count) * sz) as usize;
 
         let mmap = unsafe {
@@ -65,7 +66,7 @@ impl XskRing {
         };
 
         if mmap == libc::MAP_FAILED {
-            return Err(unsafe { *libc::__errno_location() });
+            return Err(Errno::new());
         }
 
         assert!(!mmap.is_null());
@@ -87,7 +88,7 @@ impl XskRingProd {
         fd: &SocketFd,
         off: &SocketMmapOffsets,
         count: u32,
-    ) -> Result<Self, libc::c_int> {
+    ) -> Result<Self, Errno> {
         let (inner, mmap_addr) = XskRing::map(
             fd,
             &off.inner.fr,
@@ -107,7 +108,7 @@ impl XskRingProd {
         fd: &SocketFd,
         off: &SocketMmapOffsets,
         count: u32,
-    ) -> Result<Self, libc::c_int> {
+    ) -> Result<Self, Errno> {
         let (inner, mmap_addr) = XskRing::map(
             fd,
             &off.inner.tx,
@@ -201,7 +202,7 @@ impl XskRingCons {
         fd: &SocketFd,
         off: &SocketMmapOffsets,
         count: u32,
-    ) -> Result<Self, libc::c_int> {
+    ) -> Result<Self, Errno> {
         let (inner, mmap_addr) = XskRing::map(
             fd,
             &off.inner.cr,
@@ -222,7 +223,7 @@ impl XskRingCons {
         fd: &SocketFd,
         off: &SocketMmapOffsets,
         count: u32,
-    ) -> Result<Self, libc::c_int> {
+    ) -> Result<Self, Errno> {
         let (inner, mmap_addr) = XskRing::map(
             fd,
             &off.inner.rx,
