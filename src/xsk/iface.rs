@@ -1,7 +1,8 @@
 use core::ffi::CStr;
 
-use super::{IfCtx, IfInfo, SocketMmapOffsets};
-use crate::{xdp::{XdpMmapOffsets, XdpMmapOffsetsV1}, Errno};
+use super::{IfCtx, IfInfo, SocketFd, SocketMmapOffsets};
+use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics};
+use crate::Errno;
 
 impl IfInfo {
     pub fn invalid() -> Self {
@@ -15,14 +16,19 @@ impl IfInfo {
         }
     }
 
-    pub fn from_name(&mut self, st: &CStr) -> Result<(), libc::c_int> {
+    pub fn from_name(&mut self, st: &CStr) -> Result<(), Errno> {
         let bytes = st.to_bytes_with_nul();
+
+        if bytes.len() > self.ifname.len() {
+            return Err(Errno(libc::EINVAL));
+        }
+
         assert!(bytes.len() <= self.ifname.len());
         let bytes = unsafe { &*(bytes as *const _ as *const [libc::c_char]) };
-
         let index = unsafe { libc::if_nametoindex(st.as_ptr()) };
+
         if index == 0 {
-            return Err(unsafe { *libc::__errno_location() });
+            return Err(Errno::new());
         }
 
         self.ctx.ifindex = index;
@@ -48,13 +54,15 @@ impl SocketMmapOffsets {
     const OPT_V1: libc::socklen_t = core::mem::size_of::<XdpMmapOffsetsV1>() as libc::socklen_t;
     const OPT_LATEST: libc::socklen_t = core::mem::size_of::<XdpMmapOffsets>() as libc::socklen_t;
 
-    pub fn new(fd: libc::c_int) -> Result<Self, Errno> {
-        let mut this = SocketMmapOffsets { inner: Default::default() };
-        this.set_from_fd(fd)?;
+    pub fn new(sock: &SocketFd) -> Result<Self, Errno> {
+        let mut this = SocketMmapOffsets {
+            inner: Default::default(),
+        };
+        this.set_from_fd(sock)?;
         Ok(this)
     }
 
-    pub fn set_from_fd(&mut self, fd: libc::c_int) -> Result<(), Errno> {
+    pub fn set_from_fd(&mut self, sock: &SocketFd) -> Result<(), Errno> {
         use crate::xdp::{XdpRingOffsets, XdpRingOffsetsV1};
 
         // The flags was implicit, based on the consumer.
@@ -78,7 +86,7 @@ impl SocketMmapOffsets {
 
         let err = unsafe {
             libc::getsockopt(
-                fd,
+                sock.0,
                 super::SOL_XDP,
                 super::XskUmem::XDP_MMAP_OFFSETS,
                 (&mut off) as *mut _ as *mut libc::c_void,
@@ -109,5 +117,32 @@ impl SocketMmapOffsets {
             }
             _ => Err(Errno(-libc::EINVAL)),
         }
+    }
+}
+
+impl XdpStatistics {
+    pub(crate) fn new(sock: &SocketFd) -> Result<Self, Errno> {
+        let mut this = Self::default();
+        this.set_from_fd(sock)?;
+        Ok(this)
+    }
+
+    pub(crate) fn set_from_fd(&mut self, sock: &SocketFd) -> Result<(), Errno> {
+        let mut optlen: libc::socklen_t = core::mem::size_of_val(self) as libc::socklen_t;
+        let err = unsafe {
+            libc::getsockopt(
+                sock.0,
+                super::SOL_XDP,
+                super::XskUmem::XDP_STATISTICS,
+                self as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            )
+        };
+
+        if err != 0 {
+            return Err(Errno::new());
+        }
+
+        Ok(())
     }
 }

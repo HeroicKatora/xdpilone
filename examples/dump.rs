@@ -13,23 +13,19 @@ static MEM: PacketMap = PacketMap(UnsafeCell::new([0; 1 << 20]));
 fn main() {
     let args = <Args as clap::Parser>::parse();
 
+    // Register the packet buffer with the kernel, getting an XDP socket file descriptor for it.
     let mem = NonNull::new(MEM.0.get() as *mut [u8]).unwrap();
-    let mut umem = unsafe { XskUmem::new(XskUmemConfig::default(), mem) }.unwrap();
+    let umem = unsafe { XskUmem::new(XskUmemConfig::default(), mem) }.unwrap();
+    let info = ifinfo(&args).unwrap();
 
-    let info = {
-        let bytes = b"enp8s0\0";
-        let name = core::ffi::CStr::from_bytes_with_nul(bytes).unwrap();
-        let mut info = IfInfo::invalid();
-        info.from_name(name).unwrap();
-        info
-    };
-
+    // Let's use that same file descriptor for our packet buffer operations on the specified
+    // network interface (queue 0).
     let sock = XskSocket::with_shared(&info, &umem).unwrap();
-    // The fill/completion queue.
+    // Get the fill/completion queue.
     let device = umem.fq_cq(&sock).unwrap();
 
     // The receive/transmit queue.
-    let rxtx = umem.bind(&sock, &XskSocketConfig {
+    let rxtx = umem.rx_tx(&sock, &XskSocketConfig {
         rx_size: NonZeroU32::new(16),
         tx_size: None,
         lib_flags: 0,
@@ -37,8 +33,29 @@ fn main() {
         bind_flags: 0,
     }).unwrap();
 
+    assert!(rxtx.map_tx().is_err(), "did not provide a tx_size");
+    let rx = rxtx.map_rx().unwrap();
+
+    // Ready to bind, i.e. kernel to start doing things on the ring.
+    umem.bind(&rxtx).unwrap();
+
     eprintln!("Success!");
+
+    for _ in 0..(1 << 8) {
+    }
 }
 
 #[derive(clap::Parser)]
-struct Args {}
+struct Args {
+    ifname: String,
+}
+
+fn ifinfo(args: &Args) -> Result<IfInfo, xdp_ral::Errno> {
+    let mut bytes = String::from(&args.ifname);
+    bytes.push('\0');
+    let bytes = bytes.as_bytes();
+    let name = core::ffi::CStr::from_bytes_with_nul(bytes).unwrap();
+    let mut info = IfInfo::invalid();
+    info.from_name(name)?;
+    Ok::<IfInfo, _>(info)
+}

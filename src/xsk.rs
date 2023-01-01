@@ -15,6 +15,8 @@ mod ring;
 mod socket;
 /// Implementation for memory management.
 mod umem;
+/// Implementations for the actual queue management (user-space side).
+mod user;
 
 use crate::xdp::XdpMmapOffsets;
 
@@ -83,6 +85,9 @@ pub struct XskSocketConfig {
 
 /// The basic Umem descriptor.
 ///
+/// This struct manages the buffers themselves, in a high-level sense, not any of the
+/// communication or queues.
+///
 /// Compared to `libxdp` there no link to the queues is stored. Such a struct would necessitate
 /// thread-safe access to the ring's producer and consumer queues. Instead, a `XskDeviceQueue` is the
 /// owner of a device queue's fill/completion ring, but _not_ receive and transmission rings. All
@@ -96,6 +101,7 @@ pub struct XskSocketConfig {
 ///
 /// The controller of the fill/completion pair also controls the associated bpf program which maps
 /// packets onto the set of sockets (aka. 'XSKMAP').
+// Implementation: <xsk/umem.rs>
 pub struct XskUmem {
     umem_area: NonNull<[u8]>,
     config: XskUmemConfig,
@@ -155,6 +161,7 @@ pub struct XskUser {
 /// A receiver queue.
 ///
 /// This also maintains the mmap of the associated queue.
+// Implemented in <xsk/user.rs>
 pub struct XskRxRing {
     ring: XskRingCons,
     fd: Arc<SocketFd>,
@@ -163,6 +170,7 @@ pub struct XskRxRing {
 /// A transmitter queue.
 ///
 /// This also maintains the mmap of the associated queue.
+// Implemented in <xsk/user.rs>
 pub struct XskTxRing {
     ring: XskRingProd,
     fd: Arc<SocketFd>,

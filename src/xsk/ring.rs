@@ -181,6 +181,9 @@ impl XskRingProd {
     ///
     /// Note: the client side state is _not_ adjusted. If you've called `reserve` before please
     /// check to maintain a consistent view.
+    ///
+    /// TODO: interestingly this could be implemented on a shared reference. But is doing so
+    /// useful? There's no affirmation that the _intended_ buffers are submitted.
     pub fn submit(&mut self, nb: u32) {
         // We are the only writer, all other writes are ordered before.
         let cur = self.inner.producer.load(Ordering::Relaxed);
@@ -288,6 +291,10 @@ impl XskRingCons {
         self.inner.cached_consumer -= nb;
     }
 
+    /// Mark some buffers as processed.
+    ///
+    /// TODO: interestingly this could be implemented on a shared reference. But is doing so
+    /// useful? There's no affirmation that the _intended_ buffers are submitted.
     pub fn release(&mut self, nb: u32) {
         // We are the only writer, all other writes are ordered before.
         let cur = self.inner.consumer.load(Ordering::Relaxed);

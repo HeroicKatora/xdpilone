@@ -4,8 +4,11 @@
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone)]
 pub struct XdpDesc {
+    /// Full address of this descriptor.
     pub addr: u64,
+    /// Logical length of the buffer referenced by the descriptor.
     pub len: u32,
+    /// A bitfield of options.
     pub options: u32,
 }
 
@@ -81,6 +84,15 @@ pub struct SockAddrXdp {
     pub queue_id: u32,
     #[doc(alias = "sxdp_shared_umem_fd")]
     pub shared_umem_fd: u32,
+}
+
+#[repr(C)]
+#[doc(alias = "xdp_statistics")]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct XdpStatistics {
+    pub rx_dropped: u64,
+    pub rx_invalid_descs: u64,
+    pub tx_invalid_descs: u64,
 }
 
 impl Default for SockAddrXdp {

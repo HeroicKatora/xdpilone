@@ -3,16 +3,37 @@ use core::ptr::NonNull;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
-use crate::Errno;
-use crate::xdp::{SockAddrXdp, XdpUmemReg};
+use crate::xdp::{SockAddrXdp, XdpStatistics, XdpUmemReg};
 use crate::xsk::{
-    ptr_len, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceQueue, XskDeviceControl, XskDeviceRings,
-    XskRingCons, XskRingProd, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig,
+    ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceControl, XskDeviceQueue,
+    XskDeviceRings, XskRingCons, XskRingProd, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
+    XskUmem, XskUmemConfig, XskUser,
 };
+use crate::Errno;
 
 use spin::RwLock;
 
-use super::XskUser;
+impl BufIdx {
+    /// Convert a slice of raw numbers to buffer indices, in-place.
+    pub fn from_slice(id: &[u32]) -> &[Self] {
+        unsafe { &*(id as *const [u32] as *const [Self]) }
+    }
+
+    /// Convert a slice of raw numbers to buffer indices, in-place.
+    pub fn from_mut_slice(id: &mut [u32]) -> &mut [Self] {
+        unsafe { &mut*(id as *mut [u32] as *mut [Self]) }
+    }
+
+    /// Convert a slice buffer indices to raw numbers, in-place.
+    pub fn to_slice(this: &[Self]) -> &[u32] {
+        unsafe { &*(this as *const [Self] as *const [u32]) }
+    }
+
+    /// Convert a slice buffer indices to raw numbers, in-place.
+    pub fn to_mut_slice(this: &mut [Self]) -> &mut [u32] {
+        unsafe { &mut*(this as *mut [Self] as *mut [u32]) }
+    }
+}
 
 impl XskUmem {
     /* Socket options for XDP */
@@ -95,7 +116,7 @@ impl XskUmem {
     /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
     /// code is written under the assumption that only one controller/writer for the user-space
     /// portions of each queue is active at a time. The kernel won't care about your broken code.
-    pub fn fq_cq(&mut self, interface: &XskSocket) -> Result<XskDeviceQueue, Errno> {
+    pub fn fq_cq(&self, interface: &XskSocket) -> Result<XskDeviceQueue, Errno> {
         if !self.devices.insert(interface.info.ctx) {
             return Err(Errno(libc::EINVAL));
         }
@@ -113,11 +134,13 @@ impl XskUmem {
 
         let sock = &*interface.fd;
         Self::configure_cq(sock, &self.config)?;
-        let map = SocketMmapOffsets::new(sock.0)?;
+        let map = SocketMmapOffsets::new(sock)?;
 
-        // FIXME: review the cached values, really?
-        let prod = unsafe { XskRingProd::fill(sock, &map, self.config.fill_size)? };
-        let cons = unsafe { XskRingCons::comp(sock, &map, self.config.complete_size)? };
+        // FIXME: should we be configured the `cached_consumer` and `cached_producer` and
+        // potentially other values, here? The setup produces a very rough clone of _just_ the ring
+        // itself and none of the logic beyond.
+        let prod = unsafe { XskRingProd::fill(sock, &map, self.config.fill_size) }?;
+        let cons = unsafe { XskRingCons::comp(sock, &map, self.config.complete_size) }?;
 
         let device = XskDeviceQueue {
             fcq: XskDeviceRings { map, cons, prod },
@@ -139,36 +162,10 @@ impl XskUmem {
     ///
     /// Note: if the underlying socket is shared then this will also bind other objects that share
     /// the underlying socket file descriptor, this is intended.
-    pub fn bind(
-        &mut self,
-        interface: &XskSocket,
-        config: &XskSocketConfig,
-    ) -> Result<XskUser, Errno> {
-        let mut sxdp = SockAddrXdp {
-            ifindex: interface.info.ctx.ifindex,
-            queue_id: interface.info.ctx.queue_id,
-            ..SockAddrXdp::default()
-        };
-
+    pub fn rx_tx(&self, interface: &XskSocket, config: &XskSocketConfig) -> Result<XskUser, Errno> {
         let sock = &*interface.fd;
         Self::configure_rt(sock, config)?;
-        let map = SocketMmapOffsets::new(sock.0)?;
-
-        // FIXME: `XDP_SHARED_UMEM`.
-        // sxdp.sxdp_flags |= XDP_SHARED_UMEM;
-        // sxdp.sxdp_shared_umem_fd = umem->fd;
-        sxdp.flags = config.bind_flags;
-
-        if unsafe {
-            libc::bind(
-                interface.fd.0,
-                (&sxdp) as *const _ as *const libc::sockaddr,
-                core::mem::size_of_val(&sxdp) as libc::socklen_t,
-            )
-        } != 0
-        {
-            return Err(Errno::new());
-        }
+        let map = SocketMmapOffsets::new(sock)?;
 
         Ok(XskUser {
             socket: XskSocket {
@@ -178,6 +175,35 @@ impl XskUmem {
             config: Arc::new(config.clone()),
             map,
         })
+    }
+
+    /// Activate rx/tx queues by binding the socket to a device.
+    ///
+    /// Please note that calls to `map_rx` and `map_tx` will fail while the device is bound!
+    pub fn bind(&self, interface: &XskUser) -> Result<(), Errno> {
+        let mut sxdp = SockAddrXdp {
+            ifindex: interface.socket.info.ctx.ifindex,
+            queue_id: interface.socket.info.ctx.queue_id,
+            ..SockAddrXdp::default()
+        };
+
+        // FIXME: `XDP_SHARED_UMEM`.
+        // sxdp.sxdp_flags |= XDP_SHARED_UMEM;
+        // sxdp.sxdp_shared_umem_fd = umem->fd;
+        sxdp.flags = interface.config.bind_flags;
+
+        if unsafe {
+            libc::bind(
+                interface.socket.fd.0,
+                (&sxdp) as *const _ as *const libc::sockaddr,
+                core::mem::size_of_val(&sxdp) as libc::socklen_t,
+            )
+        } != 0
+        {
+            return Err(Errno::new());
+        }
+
+        Ok(())
     }
 
     pub(crate) fn configure_cq(fd: &SocketFd, config: &XskUmemConfig) -> Result<(), Errno> {
@@ -246,8 +272,54 @@ impl XskUmem {
 }
 
 impl XskDeviceQueue {
+    /// Get the statistics of this XDP socket.
+    pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
+        XdpStatistics::new(&*self.socket.fd)
+    }
+
+    /// Configure a default XDP program.
+    ///
+    /// This is necessary to start receiving packets on any of the related receive rings, i.e. to
+    /// start consuming from the fill queue and fill the completion queue.
     pub fn setup_xdp_prog(&mut self) -> Result<(), libc::c_int> {
         todo!()
+    }
+}
+
+impl XskUser {
+    /// Get the statistics of this XDP socket.
+    pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
+        XdpStatistics::new(&*self.socket.fd)
+    }
+
+    /// Map the RX ring into memory, returning a handle.
+    ///
+    /// Fails if you did not pass any size for `rx_size` in the configuration, which should be somewhat obvious.
+    ///
+    /// FIXME: we allow mapping the ring more than once. Not a memory safety problem afaik, but a
+    /// correctness problem.
+    pub fn map_rx(&self) -> Result<XskRxRing, Errno> {
+        let rx_size = self.config.rx_size.ok_or(Errno(-libc::EINVAL))?.get();
+        let ring = unsafe { XskRingCons::rx(&self.socket.fd, &self.map, rx_size) }?;
+        Ok(XskRxRing {
+            fd: self.socket.fd.clone(),
+            ring,
+        })
+    }
+
+    /// Map the TX ring into memory, returning a handle.
+    ///
+    /// Fails if you did not pass any size for `tx_size` in the configuration, which should be somewhat obvious.
+    ///
+    /// FIXME: we allow mapping the ring more than once. Not a memory safety problem afaik, but a
+    /// correctness problem.
+    pub fn map_tx(&self) -> Result<XskTxRing, Errno> {
+        let tx_size = self.config.tx_size.ok_or(Errno(-libc::EINVAL))?.get();
+        let ring = unsafe { XskRingProd::tx(&self.socket.fd, &self.map, tx_size) }?;
+        Ok(XskTxRing {
+            fd: self.socket.fd.clone(),
+            ring,
+        })
     }
 }
 
