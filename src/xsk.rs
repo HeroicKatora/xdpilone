@@ -109,6 +109,15 @@ pub struct XskUmem {
     devices: XskDeviceControl,
 }
 
+/// A raw pointer to a specific frame in a Umem.
+///
+/// It's unsafe to access the frame, by design. All aspects of _managing_ the contents of the
+/// kernel-shared memory are left to the user of the library.
+pub struct XskUmemFrame {
+    pub addr: NonNull<[u8]>,
+    pub offset: u64,
+}
+
 #[derive(Clone)]
 struct XskDeviceControl {
     /// The tracker, not critical for memory safety (here anyways) but correctness.

@@ -43,6 +43,19 @@ impl XskTxRing {
             queue: &mut self.ring,
         }
     }
+
+    pub fn wake(&self) {
+        let _ = unsafe {
+            libc::sendto(
+                self.fd.0,
+                core::ptr::null_mut(),
+                0,
+                libc::MSG_DONTWAIT,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+    }
 }
 
 struct BufIdxIter {
@@ -95,14 +108,22 @@ impl Iterator for BufIdxIter {
 
 impl BufIdxIter {
     fn peek(queue: &mut XskRingCons, n: u32) -> Self {
-        let mut this = BufIdxIter { buffers: 0, remain: 0, base: BufIdx(0) };
+        let mut this = BufIdxIter {
+            buffers: 0,
+            remain: 0,
+            base: BufIdx(0),
+        };
         this.buffers = queue.peek(n, &mut this.base);
         this.remain = this.buffers;
         this
     }
 
     fn reserve(queue: &mut XskRingProd, n: u32) -> Self {
-        let mut this = BufIdxIter { buffers: 0, remain: 0, base: BufIdx(0) };
+        let mut this = BufIdxIter {
+            buffers: 0,
+            remain: 0,
+            base: BufIdx(0),
+        };
         this.buffers = queue.reserve(n, &mut this.base);
         this.remain = this.buffers;
         this
@@ -128,7 +149,7 @@ impl WriteFill<'_> {
     ///
     /// The iterator is polled only for each available slot until either is empty. Returns the
     /// total number of slots filled.
-    pub fn insert(&mut self, it: impl Iterator<Item=u64>) -> u32 {
+    pub fn insert(&mut self, it: impl Iterator<Item = u64>) -> u32 {
         let mut n = 0;
         for (bufidx, item) in self.idx.by_ref().zip(it) {
             n += 1;
@@ -175,10 +196,13 @@ impl Drop for ReadComplete<'_> {
 }
 
 impl WriteTx<'_> {
-    pub fn insert(&mut self, it: impl Iterator<Item=XdpDesc>) {
+    pub fn insert(&mut self, it: impl Iterator<Item = XdpDesc>) -> u32 {
+        let mut n = 0;
         for (bufidx, item) in self.idx.by_ref().zip(it) {
+            n += 1;
             unsafe { *self.queue.tx_desc(bufidx).as_ptr() = item };
         }
+        n
     }
 
     /// Commit the previously written buffers to the kernel.

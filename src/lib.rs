@@ -13,7 +13,7 @@ macro_rules! eprint {
 
 pub mod xsk;
 /// Bindings for XDP (kernel-interface).
-mod xdp;
+pub mod xdp;
 
 pub(crate) struct LastErrno;
 pub struct Errno(libc::c_int);

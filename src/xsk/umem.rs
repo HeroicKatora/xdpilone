@@ -7,7 +7,7 @@ use crate::xdp::{SockAddrXdp, XdpStatistics, XdpUmemReg};
 use crate::xsk::{
     ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceControl, XskDeviceQueue,
     XskDeviceRings, XskRingCons, XskRingProd, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
-    XskUmem, XskUmemConfig, XskUser,
+    XskUmem, XskUmemConfig, XskUmemFrame, XskUser,
 };
 use crate::Errno;
 
@@ -21,7 +21,7 @@ impl BufIdx {
 
     /// Convert a slice of raw numbers to buffer indices, in-place.
     pub fn from_mut_slice(id: &mut [u32]) -> &mut [Self] {
-        unsafe { &mut*(id as *mut [u32] as *mut [Self]) }
+        unsafe { &mut *(id as *mut [u32] as *mut [Self]) }
     }
 
     /// Convert a slice buffer indices to raw numbers, in-place.
@@ -31,7 +31,7 @@ impl BufIdx {
 
     /// Convert a slice buffer indices to raw numbers, in-place.
     pub fn to_mut_slice(this: &mut [Self]) -> &mut [u32] {
-        unsafe { &mut*(this as *mut [Self] as *mut [u32]) }
+        unsafe { &mut *(this as *mut [Self] as *mut [u32]) }
     }
 }
 
@@ -53,6 +53,9 @@ impl XskUmem {
     /// The caller passes an area denoting the memory of the ring. It must be valid for the
     /// indicated buffer size and count. The caller is also responsible for keeping the mapping
     /// alive.
+    ///
+    /// The area must be page aligned and not exceed i64::MAX in length (on future systems where
+    /// you could).
     pub unsafe fn new(config: XskUmemConfig, area: NonNull<[u8]>) -> Result<XskUmem, libc::c_int> {
         fn is_page_aligned(area: NonNull<[u8]>) -> bool {
             let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
@@ -61,9 +64,18 @@ impl XskUmem {
             (area.as_ptr() as *mut u8 as usize & (page_size - 1)) == 0
         }
 
-        debug_assert!(
+        assert!(config.frame_size > 0, "Invalid frame size");
+
+        assert!(
             is_page_aligned(area),
             "UB: Bad mmap area provided, but caller is responsible for its soundness."
+        );
+
+        let area_size = ptr_len(area.as_ptr());
+
+        assert!(
+            u64::try_from(area_size).is_ok(),
+            "Unhandled address space calculation"
         );
 
         let devices = XskDeviceControl {
@@ -83,6 +95,38 @@ impl XskUmem {
 
         Self::configure(&umem)?;
         Ok(umem)
+    }
+
+    /// Get the address associated with a buffer, if it is in-bounds.
+    ///
+    /// # Safety
+    ///
+    /// No requirements. However, please ensure that _use_ of the pointer is done properly. The
+    /// pointer is guaranteed to be derived from the `area` passed in the constructor. The method
+    /// guarantees that it does not _access_ any of the pointers in this process.
+    pub fn frame(&self, idx: BufIdx) -> Option<XskUmemFrame> {
+        let pitch: u32 = self.config.frame_size;
+        let idx: u32 = idx.0;
+        let area_size = ptr_len(self.umem_area.as_ptr()) as u64;
+
+        // Validate that it fits.
+        let offset = u64::from(pitch) * u64::from(idx);
+        if area_size.checked_sub(u64::from(pitch)) < Some(offset) {
+            return None;
+        }
+
+        // Now: area_size is converted, without loss, from an isize that denotes the [u8] length,
+        // valid as guaranteed by the caller of the constructor. We have just checked:
+        //
+        //   `[offset..offset+pitch) < area_size`.
+        //
+        // So all of the following is within the bounds of the constructor-guaranteed
+        // address manipulation.
+        let base = unsafe { self.umem_area.cast::<u8>().as_ptr().offset(offset as isize) };
+        debug_assert!(!base.is_null(), "UB: offsetting area within produced NULL");
+        let slice = core::ptr::slice_from_raw_parts_mut(base, pitch as usize);
+        let addr = unsafe { NonNull::new_unchecked(slice) };
+        Some(XskUmemFrame { addr, offset })
     }
 
     fn configure(this: &XskUmem) -> Result<(), libc::c_int> {
