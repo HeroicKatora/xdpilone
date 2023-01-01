@@ -207,10 +207,7 @@ impl WriteTx<'_> {
 
     /// Commit the previously written buffers to the kernel.
     pub fn commit(&mut self) {
-        let count = self.idx.buffers - self.idx.remain;
-        self.queue.submit(count);
-        self.idx.buffers -= count;
-        self.idx.base.0 += count;
+        self.idx.commit_prod(self.queue);
     }
 }
 

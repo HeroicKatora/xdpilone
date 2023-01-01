@@ -31,7 +31,7 @@ fn main() {
             &sock,
             &XskSocketConfig {
                 rx_size: None,
-                tx_size: NonZeroU32::new(16),
+                tx_size: NonZeroU32::new(1024),
                 lib_flags: 0,
                 xdp_flags: 0,
                 bind_flags: 0,
@@ -52,7 +52,7 @@ fn main() {
         buffer[..ARP.len()].copy_from_slice(&ARP[..])
     }
 
-    eprintln!("Success!");
+    eprintln!("Connection up!");
 
     let desc = XdpDesc {
         addr: frame.offset,
@@ -62,32 +62,80 @@ fn main() {
 
     let mut tx = tx;
     let mut device = device;
-    for _ in 0..(1 << 8) {
-        while {
-            let mut writer = tx.transmit(1);
-            writer.insert(core::iter::once(desc)) == 0 || {
-                writer.commit();
-                false
-            }
-        } {
-            core::hint::spin_loop()
+    tx.wake();
+
+    let start = std::time::Instant::now();
+
+    const BATCH: u32 = 1 << 8;
+    const TOTAL: u32 = 1 << 16;
+    const WAKE_THRESHOLD: i32 = 1 << 4;
+
+    let mut sent = 0;
+    let mut completed = 0;
+    let mut stall_count = WAKE_THRESHOLD;
+
+    loop {
+        if sent == completed && sent == TOTAL {
+            break;
         }
 
-        eprintln!("Transmitting!");
-        tx.wake();
+        let send_batch = TOTAL.saturating_sub(sent).min(BATCH);
+        let comp_batch = sent.saturating_sub(completed).min(BATCH);
 
-        while {
-            let mut reader = device.complete(1);
-            reader.read().is_none() || {
-                reader.release();
-                false
-            }
-        } {
-            core::hint::spin_loop()
+        let sent_now;
+        let comp_now;
+
+        {
+            // Try to add values to the transmit buffer.
+            let mut writer = tx.transmit(send_batch);
+            let bufs = core::iter::repeat(desc);
+            sent_now = writer.insert(bufs);
+            writer.commit();
         }
 
-        eprintln!("Sent!");
+        {
+            // Try to dequeue some completions.
+            let mut reader = device.complete(comp_batch);
+            let mut comp_temp = 0;
+
+            while reader.read().is_some() {
+                comp_temp += 1;
+            }
+
+            comp_now = comp_temp;
+            reader.release();
+        }
+
+        if sent_now == 0 && comp_now == 0 {
+            stall_count += 1;
+        } else {
+            stall_count = 0;
+        }
+
+        sent += sent_now;
+        completed += comp_now;
+
+        if stall_count > WAKE_THRESHOLD {
+            // It may be necessary to wake up. This is costly, in relative terms, so we avoid doing
+            // it when the kernel proceeds without us. We detect this by checking if both queues
+            // failed to make progress for some time.
+            tx.wake();
+            stall_count = 0;
+        }
     }
+
+    let end = std::time::Instant::now();
+    let secs = end.saturating_duration_since(start).as_secs_f32();
+    let packets = completed as f32;
+    let bytes = packets * ARP.len() as f32;
+
+    eprintln!(
+        "{:?} s; {} pkt; {} pkt/s; {} B/s",
+        secs,
+        packets,
+        packets / secs,
+        bytes / secs
+    );
 }
 
 #[derive(clap::Parser)]
