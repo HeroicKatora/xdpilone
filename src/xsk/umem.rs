@@ -46,6 +46,12 @@ impl XskUmem {
     pub const XDP_STATISTICS: libc::c_int = 7;
     pub const XDP_OPTIONS: libc::c_int = 8;
 
+    pub const XDP_BIND_SHARED_UMEM: u16 = 1 << 0;
+    /* Force copy-mode */
+    pub const XDP_BIND_COPY: u16 = 1 << 1;
+    /* Force zero-copy mode */
+    pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
+
     /// Create a new Umem ring.
     ///
     /// # Safety
@@ -231,10 +237,13 @@ impl XskUmem {
             ..SockAddrXdp::default()
         };
 
-        // FIXME: `XDP_SHARED_UMEM`.
-        // sxdp.sxdp_flags |= XDP_SHARED_UMEM;
-        // sxdp.sxdp_shared_umem_fd = umem->fd;
-        sxdp.flags = interface.config.bind_flags;
+        // Note: using a separate socket with shared umem requires one dedicated configured cq for
+        // the interface indicated.
+
+        if interface.socket.fd.0 != self.fd.0 {
+            sxdp.flags = interface.config.bind_flags | Self::XDP_BIND_SHARED_UMEM;
+            sxdp.shared_umem_fd = self.fd.0 as u32;
+        }
 
         if unsafe {
             libc::bind(
