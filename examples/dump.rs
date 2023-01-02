@@ -31,7 +31,7 @@ fn main() {
             &sock,
             &XskSocketConfig {
                 rx_size: None,
-                tx_size: NonZeroU32::new(1024),
+                tx_size: NonZeroU32::new(1 << 12),
                 lib_flags: 0,
                 xdp_flags: 0,
                 bind_flags: 0,
@@ -66,15 +66,22 @@ fn main() {
 
     let start = std::time::Instant::now();
 
-    const BATCH: u32 = 1 << 8;
-    const TOTAL: u32 = 1 << 16;
+    const BATCH: u32 = 1 << 10;
+    const TOTAL: u32 = 1 << 20;
     const WAKE_THRESHOLD: i32 = 1 << 4;
 
     let mut sent = 0;
     let mut completed = 0;
     let mut stall_count = WAKE_THRESHOLD;
 
+    let mut stat_loops = 0;
+    let mut stat_woken = 0;
+    let mut rx_log_batch = [0; 33];
+    let mut tx_log_batch = [0; 33];
+
     loop {
+        stat_loops += 1;
+
         if sent == completed && sent == TOTAL {
             break;
         }
@@ -115,11 +122,15 @@ fn main() {
         sent += sent_now;
         completed += comp_now;
 
+        rx_log_batch[sent_now.leading_zeros() as usize] += 1;
+        tx_log_batch[comp_now.leading_zeros() as usize] += 1;
+
         if stall_count > WAKE_THRESHOLD {
             // It may be necessary to wake up. This is costly, in relative terms, so we avoid doing
             // it when the kernel proceeds without us. We detect this by checking if both queues
             // failed to make progress for some time.
             tx.wake();
+            stat_woken += 1;
             stall_count = 0;
         }
     }
@@ -136,6 +147,11 @@ fn main() {
         packets / secs,
         bytes / secs
     );
+
+    eprintln!("Statistics\nLoops: {}; Woken: {}", stat_loops, stat_woken);
+
+    eprintln!("Rx Batch size (log): {:?}", rx_log_batch);
+    eprintln!("Tx Batch size (log): {:?}", rx_log_batch);
 }
 
 #[derive(clap::Parser)]

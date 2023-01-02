@@ -56,7 +56,7 @@ impl XskUmem {
     ///
     /// The area must be page aligned and not exceed i64::MAX in length (on future systems where
     /// you could).
-    pub unsafe fn new(config: XskUmemConfig, area: NonNull<[u8]>) -> Result<XskUmem, libc::c_int> {
+    pub unsafe fn new(config: XskUmemConfig, area: NonNull<[u8]>) -> Result<XskUmem, Errno> {
         fn is_page_aligned(area: NonNull<[u8]>) -> bool {
             let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
             // TODO: use `addr()` as we don't need to expose the pointer here. Just the address as
@@ -129,7 +129,7 @@ impl XskUmem {
         Some(XskUmemFrame { addr, offset })
     }
 
-    fn configure(this: &XskUmem) -> Result<(), libc::c_int> {
+    fn configure(this: &XskUmem) -> Result<(), Errno> {
         let mut mr = XdpUmemReg::default();
         mr.addr = this.umem_area.as_ptr() as *mut u8 as u64;
         mr.len = ptr_len(this.umem_area.as_ptr()) as u64;
@@ -148,7 +148,7 @@ impl XskUmem {
         };
 
         if err != 0 {
-            return Err(err);
+            return Err(Errno::new());
         }
 
         Ok(())

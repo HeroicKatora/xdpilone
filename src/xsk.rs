@@ -254,16 +254,6 @@ pub struct XskRingCons {
     mmap_addr: NonNull<[u8]>,
 }
 
-impl SocketFd {
-    fn new() -> Result<Self, libc::c_int> {
-        let fd = unsafe { libc::socket(libc::AF_XDP, libc::SOCK_RAW, 0) };
-        if fd < 0 {
-            return Err(fd);
-        }
-        Ok(SocketFd(fd))
-    }
-}
-
 impl Default for XskUmemConfig {
     fn default() -> Self {
         XskUmemConfig {
