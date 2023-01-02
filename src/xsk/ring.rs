@@ -1,9 +1,9 @@
-use core::{ptr::NonNull, ops::RangeInclusive};
 use core::sync::atomic::Ordering;
+use core::{ops::RangeInclusive, ptr::NonNull};
 
-use crate::Errno;
 use crate::xdp::{XdpDesc, XdpRingOffsets};
 use crate::xsk::{BufIdx, SocketFd, SocketMmapOffsets, XskRing, XskRingCons, XskRingProd};
+use crate::Errno;
 
 impl XskRing {
     const XDP_PGOFF_RX_RING: libc::off_t = 0;
@@ -321,3 +321,10 @@ impl Drop for XskRingCons {
         unsafe { libc::munmap(self.mmap_addr.as_ptr() as *mut _, len) };
     }
 }
+
+// Safety; `NonNull` here controls an `mmap`. All other values are almost trivally safe to send to
+// a different thread. Indeed, we hold no shared reference `&_` to any non-´Sync` resource which
+// makes this sound by definition.
+unsafe impl Send for XskRing {}
+unsafe impl Send for XskRingProd {}
+unsafe impl Send for XskRingCons {}
