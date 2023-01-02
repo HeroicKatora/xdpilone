@@ -48,6 +48,15 @@ impl IfInfo {
 
         Ok(())
     }
+
+    /// Configure the QueueID.
+    ///
+    /// This does _not_ guarantee that this queue is valid, or actually exists. You'll find out
+    /// during the bind call. Most other ways of querying such information could suffer from TOCTOU
+    /// issues in any case.
+    pub fn set_queue(&mut self, queue_id: u32) {
+        self.ctx.queue_id = queue_id;
+    }
 }
 
 impl SocketMmapOffsets {

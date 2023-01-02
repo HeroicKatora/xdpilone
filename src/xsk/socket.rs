@@ -40,7 +40,7 @@ impl XskSocket {
         match err {
             0 => {}
             libc::ENOPROTOOPT => netnscookie = Self::INIT_NS,
-            err => return Err(Errno::new()),
+            _ => return Err(Errno::new()),
         }
 
         // Won't reallocate in practice.
