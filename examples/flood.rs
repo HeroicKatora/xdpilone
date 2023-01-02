@@ -3,8 +3,8 @@
 //! Aim at a network interface with care!
 use core::cell::UnsafeCell;
 use core::{num::NonZeroU32, ptr::NonNull};
-use xdp_ral::xdp::XdpDesc;
-use xdp_ral::xsk::{BufIdx, IfInfo, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig};
+use xdpilone::xdp::XdpDesc;
+use xdpilone::xsk::{BufIdx, IfInfo, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]
@@ -56,7 +56,7 @@ fn main() {
     let desc = {
         let mut frame = umem.frame(BufIdx(0)).unwrap();
         // Safety: we are the unique thread accessing this at the moment.
-        prepare_buffer(frame.offset, unsafe { frame.addr.as_mut() })
+        prepare_buffer(frame.offset, unsafe { frame.addr.as_mut() }, &args)
     };
 
     eprintln!("Connection up!");
@@ -78,7 +78,7 @@ fn main() {
     let mut stat_loops = 0;
     let mut stat_stall = 0;
     let mut stat_woken = 0;
-    let mut rx_log_batch = [0; 33];
+    let mut tx_log_batch = [0; 33];
     let mut cq_log_batch = [0; 33];
 
     eprintln!(
@@ -135,8 +135,8 @@ fn main() {
         completed += comp_now;
         stat_loops += 1;
 
-        rx_log_batch[32-sent_now.leading_zeros() as usize] += 1;
-        cq_log_batch[32-comp_now.leading_zeros() as usize] += 1;
+        tx_log_batch[32 - sent_now.leading_zeros() as usize] += 1;
+        cq_log_batch[32 - comp_now.leading_zeros() as usize] += 1;
     }
 
     // Dump all measurements we took.
@@ -146,11 +146,13 @@ fn main() {
     let bytes = packets * desc.len as f32;
 
     eprintln!(
-        "{:?} s; {} pkt; {} pkt/s; {} B/s",
+        "{:?} s; {} pkt; {} pkt/s; {} B/s; {} L1-B/s",
         secs,
         packets,
         packets / secs,
-        bytes / secs
+        bytes / secs,
+        // Each frame has 7(Preamble)+1(delimiter)+12(IGP) Ethernet overhead.
+        (bytes + packets * 20.) / secs,
     );
 
     eprintln!(
@@ -158,16 +160,17 @@ fn main() {
         stat_loops, stat_stall, stat_woken
     );
 
-    eprintln!("Tx Batch size (log2): {:?}", rx_log_batch);
+    eprintln!("Tx Batch size (log2): {:?}", tx_log_batch);
     eprintln!("Cq Batch size (log2): {:?}", cq_log_batch);
 }
 
-fn prepare_buffer(offset: u64, buffer: &mut [u8]) -> XdpDesc {
+fn prepare_buffer(offset: u64, buffer: &mut [u8], args: &Args) -> XdpDesc {
     buffer[..ARP.len()].copy_from_slice(&ARP[..]);
+    let extra = args.length.unwrap_or(0).saturating_sub(ARP.len() as u32);
 
     XdpDesc {
         addr: offset,
-        len: ARP.len() as u32,
+        len: ARP.len() as u32 + extra,
         options: 0,
     }
 }
@@ -183,11 +186,14 @@ struct Args {
     #[arg(long = "batch-size")]
     batch: Option<u32>,
     /// The total number of packets to enqueue on the NIC.
-    #[arg(long = "packets-total")]
+    #[arg(long = "packet-total")]
     total: Option<u32>,
+    /// The count of bytes in each test packet to flood.
+    #[arg(long = "packet-length")]
+    length: Option<u32>,
 }
 
-fn ifinfo(args: &Args) -> Result<IfInfo, xdp_ral::Errno> {
+fn ifinfo(args: &Args) -> Result<IfInfo, xdpilone::Errno> {
     let mut bytes = String::from(&args.ifname);
     bytes.push('\0');
     let bytes = bytes.as_bytes();

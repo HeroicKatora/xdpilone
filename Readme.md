@@ -11,4 +11,17 @@ The primary metrics for decision making are performance, and latency.
 
 ## Overview
 
+Goals:
+- No more latency than the C implementation in the data paths.
+- Enable and simplify *correct* multi-threading on the same Umem.
 
+Non-Goals:
+- Handling BPF / XSK_MAP. This is _necessary_ to accept packets on any of the
+  RX sockets created, however it can be setup at any point with no interaction
+  with the actual queues. Hence we keep this large dependency tree separate.
+  (You could choose a pure-Rust libbpf alternative if you want to).
+- Dealing with any aspects of buffer allocation.
+
+## Name Origin
+
+The drug Ixabepilone is a pharmaceutical against cancer.
