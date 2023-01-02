@@ -1,4 +1,4 @@
-use core::ptr::NonNull;
+use core::{ptr::NonNull, ops::RangeInclusive};
 use core::sync::atomic::Ordering;
 
 use crate::Errno;
@@ -136,13 +136,13 @@ impl XskRingProd {
     ///
     /// Serves small requests based on cached state about the kernel's consumer head. Large
     /// requests may thus incur an extra refresh of the consumer head.
-    pub fn count_free(&mut self, nb: u32) -> u32 {
+    pub fn count_free(&mut self, mininmum: u32) -> u32 {
         let free_entries = self
             .inner
             .cached_consumer
             .wrapping_sub(self.inner.cached_producer);
 
-        if free_entries >= nb {
+        if free_entries >= mininmum {
             return free_entries;
         }
 
@@ -158,16 +158,20 @@ impl XskRingProd {
     /// Prepare consuming some buffers on our-side, not submitting to the kernel yet.
     ///
     /// Writes the index of the next available buffer into `idx`. Fails if less than the requested
-    /// amount of buffers can be reserved.
-    pub fn reserve(&mut self, nb: u32, idx: &mut BufIdx) -> u32 {
-        if self.count_free(nb) < nb {
+    /// amount of buffers can be reserved. Returns the number of actual buffers reserved.
+    pub fn reserve(&mut self, nb: RangeInclusive<u32>, idx: &mut BufIdx) -> u32 {
+        let (start, end) = (*nb.start(), *nb.end());
+        let free = self.count_free(start);
+
+        if free < start {
             return 0;
         }
 
+        let free = free.min(end);
         *idx = BufIdx(self.inner.cached_producer);
-        self.inner.cached_producer += nb;
+        self.inner.cached_producer += free;
 
-        nb
+        free
     }
 
     /// Cancel a previous `reserve`.
@@ -250,34 +254,32 @@ impl XskRingCons {
     }
 
     /// Find the number of available entries.
-    pub fn count_available(&mut self, nb: u32) -> u32 {
+    ///
+    /// Any count lower than `expected` will try to refresh the consumer.
+    pub fn count_available(&mut self, expected: u32) -> u32 {
         let mut available = self
             .inner
             .cached_producer
             .wrapping_sub(self.inner.cached_consumer);
 
-        if available == 0 {
+        if available < expected {
+            let new_val = self.inner.producer.load(Ordering::Relaxed);
+            available = new_val.wrapping_sub(self.inner.cached_consumer);
             self.inner.cached_producer = self.inner.producer.load(Ordering::Acquire);
-            available = self
-                .inner
-                .cached_producer
-                .wrapping_sub(self.inner.cached_consumer);
         }
 
-        // TODO: huh, this being the only use is pretty weird. Sure, in `peek` we may want to pace
-        // our logical consumption of buffers but then it could perform its own `min`? The
-        // symmetry to `RingProd` is lost anyways due to the difference in when we refresh our
-        // producer cache, right?
-        available.min(nb)
+        available
     }
 
-    pub fn peek(&mut self, nb: u32, idx: &mut BufIdx) -> u32 {
-        let count = self.count_available(nb);
+    pub fn peek(&mut self, nb: RangeInclusive<u32>, idx: &mut BufIdx) -> u32 {
+        let (start, end) = (*nb.start(), *nb.end());
+        let count = self.count_available(start);
 
-        if count == 0 {
+        if count < start {
             return 0;
         }
 
+        let count = count.min(end);
         *idx = BufIdx(self.inner.cached_consumer);
         self.inner.cached_consumer += count;
 

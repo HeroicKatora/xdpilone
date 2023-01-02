@@ -65,12 +65,12 @@ impl XskTxRing {
 }
 
 struct BufIdxIter {
+    /// The base of our operation.
+    base: BufIdx,
     /// The number of peeked buffers.
     buffers: u32,
     /// The number of buffers still left.
     remain: u32,
-    /// The base of our operation.
-    base: BufIdx,
 }
 
 /// A writer to a fill queue.
@@ -119,7 +119,7 @@ impl BufIdxIter {
             remain: 0,
             base: BufIdx(0),
         };
-        this.buffers = queue.peek(n, &mut this.base);
+        this.buffers = queue.peek(1..=n, &mut this.base);
         this.remain = this.buffers;
         this
     }
@@ -130,23 +130,34 @@ impl BufIdxIter {
             remain: 0,
             base: BufIdx(0),
         };
-        this.buffers = queue.reserve(n, &mut this.base);
+        this.buffers = queue.reserve(1..=n, &mut this.base);
         this.remain = this.buffers;
         this
     }
 
     fn commit_prod(&mut self, queue: &mut XskRingProd) {
-        let count = self.buffers - self.remain;
-        queue.submit(count);
-        self.buffers -= count;
-        self.base.0 += count;
+        // This contains an atomic write, which LLVM won't even try to optimize away.
+        // But, as long as queues are filled there's a decent chance that we didn't manage to
+        // reserve or fill a single buffer.
+        //
+        // FIXME: Should we expose this as a hint to the user? I.e. `commit_likely_empty` with a
+        // hint. As well as better ways to avoid doing any work at all.
+        if self.buffers > 0 {
+            let count = self.buffers - self.remain;
+            queue.submit(count);
+            self.buffers -= count;
+            self.base.0 += count;
+        }
     }
 
     fn release_cons(&mut self, queue: &mut XskRingCons) {
-        let count = self.buffers - self.remain;
-        queue.release(count);
-        self.buffers -= count;
-        self.base.0 += count;
+        // See also `commit_prod`.
+        if self.buffers > 0 {
+            let count = self.buffers - self.remain;
+            queue.release(count);
+            self.buffers -= count;
+            self.base.0 += count;
+        }
     }
 }
 
