@@ -19,6 +19,12 @@ impl XskDeviceQueue {
     }
 }
 
+impl Drop for XskDeviceQueue {
+    fn drop(&mut self) {
+        self.devices.remove(&self.socket.info.ctx);
+    }
+}
+
 impl XskUser {}
 
 impl XskRxRing {

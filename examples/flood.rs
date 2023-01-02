@@ -93,7 +93,7 @@ fn main() {
 
         {
             let send_batch = total.saturating_sub(sent).min(batch);
-            // Try to add values to the transmit buffer.
+            // Try to add descriptors to the transmit buffer.
             let mut writer = tx.transmit(send_batch);
             let bufs = core::iter::repeat(desc);
             sent_now = writer.insert(bufs);
@@ -158,7 +158,7 @@ fn main() {
         stat_loops, stat_stall, stat_woken
     );
 
-    eprintln!("Rx Batch size (log2): {:?}", rx_log_batch);
+    eprintln!("Tx Batch size (log2): {:?}", rx_log_batch);
     eprintln!("Cq Batch size (log2): {:?}", cq_log_batch);
 }
 
