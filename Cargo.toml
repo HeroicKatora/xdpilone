@@ -3,12 +3,14 @@ name = "xdp-ral"
 version = "0.0.0"
 edition = "2021"
 
-[dependencies]
-libc = "0.2"
+[dependencies.libc]
+version = "0.2"
+default-features = false
 # For exclusion of multiple devices on the same queue.
 [dependencies.spin]
 version = "0.9"
 features = ["rwlock"]
+default-features = false
 
 [dev-dependencies.clap]
 version = "4"
