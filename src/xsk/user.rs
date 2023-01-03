@@ -40,6 +40,8 @@ impl XskRxRing {
 }
 
 impl XskTxRing {
+    const XDP_RING_NEED_WAKEUP: u32 = 1 << 0;
+
     /// Transmit some buffers.
     ///
     /// Returns a proxy that can be fed descriptors.
@@ -48,6 +50,10 @@ impl XskTxRing {
             idx: BufIdxIter::reserve(&mut self.ring, n),
             queue: &mut self.ring,
         }
+    }
+
+    pub fn needs_wakeup(&self) -> bool {
+        self.ring.check_flags() & Self::XDP_RING_NEED_WAKEUP != 0
     }
 
     pub fn wake(&self) {

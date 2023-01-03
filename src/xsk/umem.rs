@@ -51,6 +51,8 @@ impl XskUmem {
     pub const XDP_BIND_COPY: u16 = 1 << 1;
     /* Force zero-copy mode */
     pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
+    /* Support for need wakeup */
+    pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
 
     /// Create a new Umem ring.
     ///

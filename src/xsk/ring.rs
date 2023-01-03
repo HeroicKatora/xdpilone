@@ -197,6 +197,10 @@ impl XskRingProd {
             .producer
             .store(cur.wrapping_add(nb), Ordering::Release);
     }
+
+    pub fn check_flags(&self) -> u32 {
+        unsafe { *self.inner.flags.as_ptr() }
+    }
 }
 
 impl XskRingCons {
@@ -305,6 +309,10 @@ impl XskRingCons {
         self.inner
             .consumer
             .store(cur.wrapping_add(nb), Ordering::Release);
+    }
+
+    pub fn check_flags(&self) -> u32 {
+        unsafe { *self.inner.flags.as_ptr() }
     }
 }
 

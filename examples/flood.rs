@@ -36,10 +36,10 @@ fn main() {
             &sock,
             &XskSocketConfig {
                 rx_size: None,
-                tx_size: NonZeroU32::new(1 << 12),
+                tx_size: NonZeroU32::new(1 << 14),
                 lib_flags: 0,
                 xdp_flags: 0,
-                bind_flags: 0,
+                bind_flags: XskUmem::XDP_BIND_ZEROCOPY | XskUmem::XDP_BIND_NEED_WAKEUP,
             },
         )
         .unwrap();
@@ -69,9 +69,10 @@ fn main() {
 
     let batch: u32 = args.batch.unwrap_or(1 << 10);
     let total: u32 = args.total.unwrap_or(1 << 20);
-    const WAKE_THRESHOLD: i32 = 1 << 4;
+    const WAKE_THRESHOLD: i32 = 0;
 
     let mut sent = 0;
+    // Don't wake if no additional sends happened since last time..
     let mut completed = 0;
     let mut stall_count = WAKE_THRESHOLD;
 
@@ -121,19 +122,21 @@ fn main() {
             stall_count = 0;
         }
 
-        if stall_count > WAKE_THRESHOLD {
-            // It may be necessary to wake up. This is costly, in relative terms, so we avoid doing
-            // it when the kernel proceeds without us. We detect this by checking if both queues
-            // failed to make progress for some time.
-            tx.wake();
-            stat_woken += 1;
-            stall_count = 0;
-        }
-
         // Stat tracking..
         sent += sent_now;
         completed += comp_now;
         stat_loops += 1;
+
+        if stall_count > WAKE_THRESHOLD {
+            // It may be necessary to wake up. This is costly, in relative terms, so we avoid doing
+            // it when the kernel proceeds without us. We detect this by checking if both queues
+            // failed to make progress for some time. And then only do it once.
+            if tx.needs_wakeup() {
+                tx.wake();
+                stat_woken += 1;
+                stall_count = 0;
+            }
+        }
 
         tx_log_batch[32 - sent_now.leading_zeros() as usize] += 1;
         cq_log_batch[32 - comp_now.leading_zeros() as usize] += 1;
