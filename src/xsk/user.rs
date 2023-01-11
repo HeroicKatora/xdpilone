@@ -168,6 +168,11 @@ impl BufIdxIter {
 }
 
 impl WriteFill<'_> {
+    /// The total number of available slots.
+    pub fn capacity(&self) -> u32 {
+        self.idx.buffers
+    }
+
     /// Fill additional slots that were reserved.
     ///
     /// The iterator is polled only for each available slot until either is empty. Returns the
@@ -197,6 +202,11 @@ impl Drop for WriteFill<'_> {
 }
 
 impl ReadComplete<'_> {
+    /// The total number of available buffers.
+    pub fn capacity(&self) -> u32 {
+        self.idx.buffers
+    }
+
     pub fn read(&mut self) -> Option<XdpDesc> {
         let bufidx = self.idx.next()?;
         // Safety: the buffer is from that same queue by construction.
@@ -219,6 +229,11 @@ impl Drop for ReadComplete<'_> {
 }
 
 impl WriteTx<'_> {
+    /// The total number of available slots.
+    pub fn capacity(&self) -> u32 {
+        self.idx.buffers
+    }
+
     pub fn insert(&mut self, it: impl Iterator<Item = XdpDesc>) -> u32 {
         let mut n = 0;
         for (bufidx, item) in self.idx.by_ref().zip(it) {
@@ -244,6 +259,11 @@ impl Drop for WriteTx<'_> {
 }
 
 impl ReadRx<'_> {
+    /// The total number of available buffers.
+    pub fn capacity(&self) -> u32 {
+        self.idx.buffers
+    }
+
     pub fn read(&mut self) -> Option<u64> {
         let bufidx = self.idx.next()?;
         // Safety: the buffer is from that same queue by construction.

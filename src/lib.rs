@@ -25,8 +25,13 @@ impl From<LastErrno> for Errno {
 }
 
 impl Errno {
-    pub(crate) fn new() -> Self {
+    /// Create an error from the latest `errno`.
+    pub fn new() -> Self {
         Errno(unsafe { *libc::__errno_location() })
+    }
+
+    pub fn get_raw(&self) -> libc::c_int {
+        self.0
     }
 }
 

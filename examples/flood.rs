@@ -101,6 +101,15 @@ fn main() {
             writer.commit();
         }
 
+        // It may be necessary to wake up. This is costly, in relative terms, so we avoid doing
+        // it when the kernel proceeds without us. We detect this by checking if both queues
+        // failed to make progress for some time. And then only do it once.
+        if tx.needs_wakeup() {
+            tx.wake();
+            stat_woken += 1;
+            stall_count = 0;
+        }
+
         {
             let comp_batch = sent.saturating_sub(completed).min(batch);
             // Try to dequeue some completions.
@@ -126,17 +135,6 @@ fn main() {
         sent += sent_now;
         completed += comp_now;
         stat_loops += 1;
-
-        if stall_count > WAKE_THRESHOLD {
-            // It may be necessary to wake up. This is costly, in relative terms, so we avoid doing
-            // it when the kernel proceeds without us. We detect this by checking if both queues
-            // failed to make progress for some time. And then only do it once.
-            if tx.needs_wakeup() {
-                tx.wake();
-                stat_woken += 1;
-                stall_count = 0;
-            }
-        }
 
         tx_log_batch[32 - sent_now.leading_zeros() as usize] += 1;
         cq_log_batch[32 - comp_now.leading_zeros() as usize] += 1;

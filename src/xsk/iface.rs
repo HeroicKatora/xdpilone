@@ -57,6 +57,14 @@ impl IfInfo {
     pub fn set_queue(&mut self, queue_id: u32) {
         self.ctx.queue_id = queue_id;
     }
+
+    pub fn ifindex(&self) -> u32 {
+        self.ctx.ifindex
+    }
+
+    pub fn queue_id(&self) -> u32 {
+        self.ctx.queue_id
+    }
 }
 
 impl SocketMmapOffsets {

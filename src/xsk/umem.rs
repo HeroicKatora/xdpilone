@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
-use crate::xdp::{SockAddrXdp, XdpStatistics, XdpUmemReg};
+use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpUmemReg};
 use crate::xsk::{
     ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceControl, XskDeviceQueue,
     XskDeviceRings, XskRingCons, XskRingProd, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
@@ -135,6 +135,13 @@ impl XskUmem {
         let slice = core::ptr::slice_from_raw_parts_mut(base, pitch as usize);
         let addr = unsafe { NonNull::new_unchecked(slice) };
         Some(XskUmemFrame { addr, offset })
+    }
+
+    /// Count the number of available data frames.
+    pub fn len_frames(&self) -> u32 {
+        let area_size = ptr_len(self.umem_area.as_ptr()) as u64;
+        let count = area_size / u64::from(self.config.frame_size);
+        u32::try_from(count).unwrap_or(u32::MAX)
     }
 
     fn configure(this: &XskUmem) -> Result<(), Errno> {
@@ -404,5 +411,15 @@ impl super::ControlSet for SpinLockedControlSet {
     fn remove(&self, ctx: &IfCtx) {
         let mut lock = self.inner.write();
         lock.remove(ctx);
+    }
+}
+
+impl XskUmemFrame {
+    pub fn into_xdp(self, len: u32) -> XdpDesc {
+        XdpDesc { 
+            addr: self.offset,
+            len,
+            options: 0,
+        }
     }
 }

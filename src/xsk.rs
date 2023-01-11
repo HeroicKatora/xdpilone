@@ -30,6 +30,8 @@ pub(crate) struct SocketFd(libc::c_int);
 /// we define it ourselves here.
 pub(crate) const SOL_XDP: libc::c_int = 283;
 
+pub use self::user::{ReadComplete, ReadRx, WriteFill, WriteTx};
+
 /// Internal structure shared for all rings.
 ///
 /// TODO: copied from <xdp.h>, does everything make sense in Rust?
