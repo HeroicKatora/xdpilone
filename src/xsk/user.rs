@@ -173,6 +173,10 @@ impl WriteFill<'_> {
         self.idx.buffers
     }
 
+    pub fn insert_once(&mut self, nr: u64) -> u32 {
+        self.insert(core::iter::once(nr))
+    }
+
     /// Fill additional slots that were reserved.
     ///
     /// The iterator is polled only for each available slot until either is empty. Returns the
@@ -232,6 +236,10 @@ impl WriteTx<'_> {
     /// The total number of available slots.
     pub fn capacity(&self) -> u32 {
         self.idx.buffers
+    }
+
+    pub fn insert_once(&mut self, nr: XdpDesc) -> u32 {
+        self.insert(core::iter::once(nr))
     }
 
     pub fn insert(&mut self, it: impl Iterator<Item = XdpDesc>) -> u32 {
