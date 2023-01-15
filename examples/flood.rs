@@ -54,7 +54,7 @@ fn main() {
     // Setup one frame we're going to use, repeatedly.
     // We only need its descriptor for the TX queue.
     let desc = {
-        let mut frame = umem.frame(BufIdx(0)).unwrap();
+        let mut frame = umem.frame(BufIdx(1)).unwrap();
         // Safety: we are the unique thread accessing this at the moment.
         prepare_buffer(frame.offset, unsafe { frame.addr.as_mut() }, &args)
     };

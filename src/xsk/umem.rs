@@ -152,13 +152,14 @@ impl XskUmem {
         mr.headroom = this.config.headroom;
         mr.flags = this.config.flags;
 
+        let optlen = core::mem::size_of_val(&mr) as libc::socklen_t;
         let err = unsafe {
             libc::setsockopt(
                 this.fd.0,
                 super::SOL_XDP,
                 Self::XDP_UMEM_REG,
                 (&mut mr) as *mut _ as *mut libc::c_void,
-                core::mem::size_of_val(&mr) as libc::socklen_t,
+                optlen,
             )
         };
 

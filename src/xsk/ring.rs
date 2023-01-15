@@ -198,6 +198,13 @@ impl XskRingProd {
             .store(cur.wrapping_add(nb), Ordering::Release);
     }
 
+    pub fn count_pending(&self) -> u32 {
+        let comitted = self.inner.producer.load(Ordering::Relaxed);
+        let consumed = self.inner.consumer.load(Ordering::Relaxed);
+
+        comitted.wrapping_sub(consumed)
+    }
+
     pub fn check_flags(&self) -> u32 {
         unsafe { *self.inner.flags.as_ptr() }
     }
@@ -273,6 +280,13 @@ impl XskRingCons {
         }
 
         available
+    }
+
+    pub fn count_pending(&self) -> u32 {
+        let available = self.inner.producer.load(Ordering::Relaxed);
+        let consumed = self.inner.consumer.load(Ordering::Relaxed);
+
+        available.wrapping_sub(consumed)
     }
 
     pub fn peek(&mut self, nb: RangeInclusive<u32>, idx: &mut BufIdx) -> u32 {

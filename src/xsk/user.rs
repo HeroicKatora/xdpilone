@@ -17,6 +17,34 @@ impl XskDeviceQueue {
             queue: &mut self.fcq.cons,
         }
     }
+
+    /// Get the raw file descriptor of this ring.
+    ///
+    /// # Safety
+    ///
+    /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
+    /// and avoid modifying it (unless you know what you're doing). It should be treated as a
+    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
+    /// `XskDeviceQueue` modifies a reused file descriptor that it assumes to own.
+    pub fn as_raw_fd(&self) -> libc::c_int {
+        self.socket.fd.0
+    }
+
+    pub fn needs_wakeup(&self) -> bool {
+        self.fcq.prod.check_flags() & XskTxRing::XDP_RING_NEED_WAKEUP != 0
+    }
+
+    pub fn wake(&mut self) {
+        // A bit more complex than TX, here we do a full poll on the FD.
+        let mut poll = libc::pollfd {
+            fd: self.socket.fd.0,
+            events: 0,
+            revents: 0,
+        };
+
+        // FIXME: should somehow log this, right?
+        let _err = unsafe { libc::poll(&mut poll as *mut _, 1, 0) };
+    }
 }
 
 impl Drop for XskDeviceQueue {
@@ -36,6 +64,18 @@ impl XskRxRing {
             idx: BufIdxIter::peek(&mut self.ring, n),
             queue: &mut self.ring,
         }
+    }
+
+    /// Get the raw file descriptor of this RX ring.
+    ///
+    /// # Safety
+    ///
+    /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
+    /// and avoid modifying it (unless you know what you're doing). It should be treated as a
+    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
+    /// `XskRxRing` modifies a reused file descriptor that it assumes to own...
+    pub fn as_raw_fd(&self) -> libc::c_int {
+        self.fd.0
     }
 }
 
@@ -57,6 +97,7 @@ impl XskTxRing {
     }
 
     pub fn wake(&self) {
+        // FIXME: should somehow log this on failure, right?
         let _ = unsafe {
             libc::sendto(
                 self.fd.0,
@@ -67,6 +108,19 @@ impl XskTxRing {
                 0,
             )
         };
+    }
+
+    /// Get the raw file descriptor of this TX ring.
+    ///
+    /// # Safety
+    ///
+    /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
+    /// and avoid modifying it (unless you know what you're doing). It should be treated as a
+    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
+    /// `XskTxRing` modifies a reused file descriptor that it assumes to own (for instance, `wake`
+    /// sends a message to it).
+    pub fn as_raw_fd(&self) -> libc::c_int {
+        self.fd.0
     }
 }
 
@@ -183,11 +237,15 @@ impl WriteFill<'_> {
     /// total number of slots filled.
     pub fn insert(&mut self, it: impl Iterator<Item = u64>) -> u32 {
         let mut n = 0;
-        for (bufidx, item) in self.idx.by_ref().zip(it) {
+        for (item, bufidx) in it.zip(self.idx.by_ref()) {
             n += 1;
             unsafe { *self.queue.fill_addr(bufidx).as_ptr() = item };
         }
         n
+    }
+
+    pub fn pending(&self) -> u32 {
+        self.queue.count_pending()
     }
 
     /// Commit the previously written buffers to the kernel.
@@ -211,15 +269,19 @@ impl ReadComplete<'_> {
         self.idx.buffers
     }
 
-    pub fn read(&mut self) -> Option<XdpDesc> {
+    pub fn read(&mut self) -> Option<u64> {
         let bufidx = self.idx.next()?;
         // Safety: the buffer is from that same queue by construction.
-        Some(unsafe { *self.queue.rx_desc(bufidx).as_ptr() })
+        Some(unsafe { *self.queue.comp_addr(bufidx).as_ptr() })
     }
 
     /// Commit some of the written buffers to the kernel.
     pub fn release(&mut self) {
         self.idx.release_cons(self.queue)
+    }
+
+    pub fn pending(&self) -> u32 {
+        self.queue.count_pending()
     }
 }
 
@@ -244,7 +306,7 @@ impl WriteTx<'_> {
 
     pub fn insert(&mut self, it: impl Iterator<Item = XdpDesc>) -> u32 {
         let mut n = 0;
-        for (bufidx, item) in self.idx.by_ref().zip(it) {
+        for (item, bufidx) in it.zip(self.idx.by_ref()) {
             n += 1;
             unsafe { *self.queue.tx_desc(bufidx).as_ptr() = item };
         }
@@ -272,15 +334,19 @@ impl ReadRx<'_> {
         self.idx.buffers
     }
 
-    pub fn read(&mut self) -> Option<u64> {
+    pub fn read(&mut self) -> Option<XdpDesc> {
         let bufidx = self.idx.next()?;
         // Safety: the buffer is from that same queue by construction.
-        Some(unsafe { *self.queue.comp_addr(bufidx).as_ptr() })
+        Some(unsafe { *self.queue.rx_desc(bufidx).as_ptr() })
     }
 
     /// Commit some of the written buffers to the kernel.
     pub fn release(&mut self) {
         self.idx.release_cons(self.queue)
+    }
+
+    pub fn pending(&self) -> u32 {
+        self.queue.count_pending()
     }
 }
 
