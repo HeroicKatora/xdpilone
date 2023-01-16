@@ -1,24 +1,21 @@
 //! This example demonstrates _flooding_ a network with packets.
 //!
-//! Aim at a network interface with care!
-use core::cell::UnsafeCell;
-use core::{num::NonZeroU32, ptr::NonNull};
+//! This will very aggressively poll the queues. Seriously, wasting time is an understatement. Do
+//! not use in production and aim at a network interface with care!
+use core::{mem::MaybeUninit, num::NonZeroU32, ptr::NonNull};
 use xdpilone::xdp::XdpDesc;
 use xdpilone::xsk::{BufIdx, IfInfo, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]
-struct PacketMap(UnsafeCell<[u8; 1 << 20]>);
-// Safety: no instance used for unsynchronized data access.
-unsafe impl Sync for PacketMap {}
-
-static MEM: PacketMap = PacketMap(UnsafeCell::new([0; 1 << 20]));
+struct PacketMap(MaybeUninit<[u8; 1 << 20]>);
 
 fn main() {
     let args = <Args as clap::Parser>::parse();
 
+    let alloc = Box::new(PacketMap(MaybeUninit::uninit()));
     // Register the packet buffer with the kernel, getting an XDP socket file descriptor for it.
-    let mem = NonNull::new(MEM.0.get() as *mut [u8]).unwrap();
+    let mem = NonNull::new(Box::leak(alloc).0.as_mut_ptr()).unwrap();
 
     // Safety: we guarantee this mapping is aligned, and will be alive. It is static, after-all.
     let umem = unsafe { XskUmem::new(XskUmemConfig::default(), mem) }.unwrap();
@@ -69,13 +66,11 @@ fn main() {
 
     let batch: u32 = args.batch.unwrap_or(1 << 10);
     let total: u32 = args.total.unwrap_or(1 << 20);
-    const WAKE_THRESHOLD: i32 = 0;
 
     let mut sent = 0;
-    // Don't wake if no additional sends happened since last time..
     let mut completed = 0;
-    let mut stall_count = WAKE_THRESHOLD;
 
+    // some nice stats to track and later report.
     let mut stat_loops = 0;
     let mut stat_stall = 0;
     let mut stat_woken = 0;
@@ -87,6 +82,8 @@ fn main() {
         total as f32 * desc.len as f32,
         total
     );
+
+    eprintln!("The description is {:?}", desc,);
 
     while !(sent == completed && sent == total) {
         let sent_now: u32; // Number of buffers enqueued in this iteration.
@@ -107,7 +104,6 @@ fn main() {
         if tx.needs_wakeup() {
             tx.wake();
             stat_woken += 1;
-            stall_count = 0;
         }
 
         {
@@ -125,10 +121,7 @@ fn main() {
         }
 
         if sent_now == 0 && comp_now == 0 {
-            stall_count += 1;
             stat_stall += 1;
-        } else {
-            stall_count = 0;
         }
 
         // Stat tracking..

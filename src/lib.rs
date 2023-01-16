@@ -8,6 +8,8 @@
 //! `bpf`. You can send packets but you can not receive them. Please use another library for `bpf`
 //! and `netlink` interaction to configure the network device to route received frames to the RX
 //! ring.
+//!
+//! The entrypoint to the library is an instance of [`xsk::XskUmem`].
 #![no_std]
 extern crate alloc;
 

@@ -1,5 +1,5 @@
 use crate::xdp::XdpDesc;
-use crate::xsk::{BufIdx, XskDeviceQueue, XskRingCons, XskRingProd, XskRxRing, XskTxRing, XskUser};
+use crate::xsk::{BufIdx, XskDeviceQueue, XskRingCons, XskRingProd, XskRxRing, XskTxRing};
 
 impl XskDeviceQueue {
     /// Add some buffers to the fill ring.
