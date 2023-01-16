@@ -1,21 +1,24 @@
+//! Rust idiomatic bindings for the AF_XDP socket interface.
+//!
+//! This library helps with creating suitable socket(s) from a memory allocation of chunks, sockets
+//! for access to all four rings, binding to a specific `(ifname, queue_id)`, and for creating the
+//! memory mapping to interact with all these queues directly.
+//!
+//! It does _not_ interact with the packet filter / forwarding directly, nor any other aspect of
+//! `bpf`. You can send packets but you can not receive them. Please use another library for `bpf`
+//! and `netlink` interaction to configure the network device to route received frames to the RX
+//! ring.
 #![no_std]
 extern crate alloc;
 
-macro_rules! eprint {
-    ($msg:literal, $($arg:expr),*) => {
-        match ::alloc::format!($msg, $($arg),*) {
-            msg => {
-                unsafe { libc::write(2, msg.as_bytes().as_ptr() as *const _, msg.len()) };
-            }
-        }
-    }
-}
-
+/// User-space side of one or multiple XDP sockets.
 pub mod xsk;
-/// Bindings for XDP (kernel-interface).
+/// Bindings for XDP kernel-interface, including structs.
 pub mod xdp;
 
 pub(crate) struct LastErrno;
+
+/// An error that has been read from `errno`.
 pub struct Errno(libc::c_int);
 
 impl From<LastErrno> for Errno {
@@ -30,6 +33,7 @@ impl Errno {
         Errno(unsafe { *libc::__errno_location() })
     }
 
+    /// Get the actual `errno` value.
     pub fn get_raw(&self) -> libc::c_int {
         self.0
     }

@@ -239,7 +239,8 @@ impl XskUmem {
 
     /// Activate rx/tx queues by binding the socket to a device.
     ///
-    /// Please note that calls to `map_rx` and `map_tx` will fail while the device is bound!
+    /// Please note that calls to `map_rx` and `map_tx` will fail while the device is bound! Also,
+    /// the fill and completion queues of the interface/queue must be setup already.
     pub fn bind(&self, interface: &XskUser) -> Result<(), Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,

@@ -5,6 +5,9 @@ use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics};
 use crate::Errno;
 
 impl IfInfo {
+    /// Create an info referring to no device.
+    ///
+    /// This allows allocating an info to overwrite with more specific information.
     pub fn invalid() -> Self {
         IfInfo {
             ctx: IfCtx {
@@ -16,6 +19,10 @@ impl IfInfo {
         }
     }
 
+    /// Set the information from an interface, by name.
+    ///
+    /// Common interface names may be `enp8s0`, `lo`, `wg0`, etc. The interface name-to-index pair
+    /// will be very similar to what would be returned by `ip link show`.
     pub fn from_name(&mut self, st: &CStr) -> Result<(), Errno> {
         let bytes = st.to_bytes_with_nul();
 
@@ -39,11 +46,14 @@ impl IfInfo {
         Ok(())
     }
 
-    pub fn from_ifindex(&mut self, index: libc::c_uint) -> Result<(), libc::c_int> {
+    /// Set the information from an interface, by its numeric identifier.
+    ///
+    /// See [`Self::from_name`].
+    pub fn from_ifindex(&mut self, index: libc::c_uint) -> Result<(), Errno> {
         let err = unsafe { libc::if_indextoname(index, self.ifname.as_mut_ptr()) };
 
         if err.is_null() {
-            return Err(unsafe { *libc::__errno_location() });
+            return Err(Errno::new());
         }
 
         Ok(())
@@ -58,10 +68,12 @@ impl IfInfo {
         self.ctx.queue_id = queue_id;
     }
 
+    /// Get the `ifindex`, numeric ID of the interface in the kernel, for the identified interface.
     pub fn ifindex(&self) -> u32 {
         self.ctx.ifindex
     }
 
+    /// Get the queue ID previously set with `set_queue`.
     pub fn queue_id(&self) -> u32 {
         self.ctx.queue_id
     }
@@ -71,6 +83,7 @@ impl SocketMmapOffsets {
     const OPT_V1: libc::socklen_t = core::mem::size_of::<XdpMmapOffsetsV1>() as libc::socklen_t;
     const OPT_LATEST: libc::socklen_t = core::mem::size_of::<XdpMmapOffsets>() as libc::socklen_t;
 
+    /// Query the socket mmap offsets of an XDP socket.
     pub fn new(sock: &SocketFd) -> Result<Self, Errno> {
         let mut this = SocketMmapOffsets {
             inner: Default::default(),
@@ -79,6 +92,10 @@ impl SocketMmapOffsets {
         Ok(this)
     }
 
+    /// Overwrite data with the socket mmap offsets of an XDP socket.
+    ///
+    /// This operation is atomic: On error, the previous values are retained. On success, the
+    /// attributes have been updated.
     pub fn set_from_fd(&mut self, sock: &SocketFd) -> Result<(), Errno> {
         use crate::xdp::{XdpRingOffsets, XdpRingOffsetsV1};
 

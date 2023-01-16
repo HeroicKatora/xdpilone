@@ -18,6 +18,16 @@ impl XskDeviceQueue {
         }
     }
 
+    /// Return the difference between our the kernel's producer state and our consumer head.
+    pub fn available(&self) -> u32 {
+        self.fcq.cons.count_pending()
+    }
+
+    /// Return the difference between our committed consumer state and the kernel's producer state.
+    pub fn pending(&self) -> u32 {
+        self.fcq.prod.count_pending()
+    }
+
     /// Get the raw file descriptor of this ring.
     ///
     /// # Safety
@@ -34,6 +44,7 @@ impl XskDeviceQueue {
         self.fcq.prod.check_flags() & XskTxRing::XDP_RING_NEED_WAKEUP != 0
     }
 
+    /// Poll the fill queue descriptor, to wake it up.
     pub fn wake(&mut self) {
         // A bit more complex than TX, here we do a full poll on the FD.
         let mut poll = libc::pollfd {
@@ -53,8 +64,6 @@ impl Drop for XskDeviceQueue {
     }
 }
 
-impl XskUser {}
-
 impl XskRxRing {
     /// Receive some buffers.
     ///
@@ -64,6 +73,10 @@ impl XskRxRing {
             idx: BufIdxIter::peek(&mut self.ring, n),
             queue: &mut self.ring,
         }
+    }
+
+    pub fn available(&self) -> u32 {
+        self.ring.count_pending()
     }
 
     /// Get the raw file descriptor of this RX ring.
@@ -92,10 +105,16 @@ impl XskTxRing {
         }
     }
 
+    /// Return the difference between our committed producer state and the kernel's consumer head.
+    pub fn pending(&self) -> u32 {
+        self.ring.count_pending()
+    }
+
     pub fn needs_wakeup(&self) -> bool {
         self.ring.check_flags() & Self::XDP_RING_NEED_WAKEUP != 0
     }
 
+    /// Send a message (with `MSG_DONTWAIT`) to wake up the transmit queue.
     pub fn wake(&self) {
         // FIXME: should somehow log this on failure, right?
         let _ = unsafe {
@@ -134,6 +153,8 @@ struct BufIdxIter {
 }
 
 /// A writer to a fill queue.
+///
+/// Created with [`XskDeviceQueue::fill`].
 pub struct WriteFill<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -141,6 +162,8 @@ pub struct WriteFill<'queue> {
 }
 
 /// A reader from a completion queue.
+///
+/// Created with [`XskDeviceQueue::complete`].
 pub struct ReadComplete<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -148,6 +171,8 @@ pub struct ReadComplete<'queue> {
 }
 
 /// A writer to a transmission (TX) queue.
+///
+/// Created with [`XskTxRing::transmit`].
 pub struct WriteTx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -155,6 +180,8 @@ pub struct WriteTx<'queue> {
 }
 
 /// A reader from an receive (RX) queue.
+///
+/// Created with [`XskRxRing::receive`].
 pub struct ReadRx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -227,6 +254,11 @@ impl WriteFill<'_> {
         self.idx.buffers
     }
 
+    /// Fill one device descriptor to be filled.
+    ///
+    /// A descriptor is an offset in the respective Umem's memory. Any address within a chunk can
+    /// be used to mark the chunk as available for fill. The kernel will overwrite the contents
+    /// arbitrarily until the chunk is returned via the RX queue.
     pub fn insert_once(&mut self, nr: u64) -> u32 {
         self.insert(core::iter::once(nr))
     }
@@ -242,10 +274,6 @@ impl WriteFill<'_> {
             unsafe { *self.queue.fill_addr(bufidx).as_ptr() = item };
         }
         n
-    }
-
-    pub fn pending(&self) -> u32 {
-        self.queue.count_pending()
     }
 
     /// Commit the previously written buffers to the kernel.
@@ -278,10 +306,6 @@ impl ReadComplete<'_> {
     /// Commit some of the written buffers to the kernel.
     pub fn release(&mut self) {
         self.idx.release_cons(self.queue)
-    }
-
-    pub fn pending(&self) -> u32 {
-        self.queue.count_pending()
     }
 }
 
@@ -343,10 +367,6 @@ impl ReadRx<'_> {
     /// Commit some of the written buffers to the kernel.
     pub fn release(&mut self) {
         self.idx.release_cons(self.queue)
-    }
-
-    pub fn pending(&self) -> u32 {
-        self.queue.count_pending()
     }
 }
 

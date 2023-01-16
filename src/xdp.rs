@@ -23,6 +23,7 @@ pub struct XdpUmemReg {
     pub flags: u32,
 }
 
+/// The mmap-offsets to use for mapping one ring of an XDP socket.
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone)]
 pub struct XdpRingOffsets {
@@ -36,7 +37,7 @@ pub struct XdpRingOffsets {
     pub flags: u64,
 }
 
-/// The offsets as returned by the kernel.
+/// The different offsets as returned by the kernel, for all rings of a socket.
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone)]
 pub struct XdpMmapOffsets {

@@ -196,8 +196,9 @@ pub struct IfInfo {
     ifname: [libc::c_char; libc::IFNAMSIZ],
 }
 
+/// Reduced version of `IfCtx`, only retaining numeric IDs for the kernel.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct IfCtx {
+pub(crate) struct IfCtx {
     ifindex: libc::c_uint,
     queue_id: u32,
     /// The namespace cookie, associated with a *socket*.
