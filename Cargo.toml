@@ -1,7 +1,16 @@
 [package]
+# Distribution information.
 name = "xdpilone"
-version = "0.0.0"
+version = "1.0.0"
+description = "Interaction with Linux XDP sockets and rings. No libbpf/libxpd-sys. Lightweight, high-performance."
+
+license = "EUPL-1.2"
+authors = ["Andreas Molzer"]
+categories = ["network-programming", "os::linux-apis", "no_std"]
+
+# Packet configuration
 edition = "2021"
+rust-version = "1.65.0"
 
 [dependencies.libc]
 version = "0.2"
