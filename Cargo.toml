@@ -6,7 +6,7 @@ description = "Interaction with Linux XDP sockets and rings. No libbpf/libxpd-sy
 
 license = "EUPL-1.2"
 authors = ["Andreas Molzer"]
-categories = ["network-programming", "os::linux-apis", "no_std"]
+categories = ["network-programming", "os::linux-apis", "no-std"]
 repository = "https://github.com/HeroicKatora/xdpilone"
 
 # Packet configuration
