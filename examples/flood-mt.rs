@@ -4,8 +4,9 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::{num::NonZeroU32, ptr::NonNull};
+
 use xdpilone::xdp::XdpDesc;
-use xdpilone::xsk::{BufIdx, IfInfo, RingTx, Socket, SocketConfig, Umem, UmemConfig};
+use xdpilone::{BufIdx, IfInfo, RingTx, Socket, SocketConfig, Umem, UmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]

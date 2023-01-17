@@ -4,7 +4,7 @@
 //! not use in production and aim at a network interface with care!
 use core::{mem::MaybeUninit, num::NonZeroU32, ptr::NonNull};
 use xdpilone::xdp::XdpDesc;
-use xdpilone::xsk::{BufIdx, IfInfo, Socket, SocketConfig, Umem, UmemConfig};
+use xdpilone::{BufIdx, IfInfo, Socket, SocketConfig, Umem, UmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]

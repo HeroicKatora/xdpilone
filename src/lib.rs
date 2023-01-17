@@ -9,13 +9,19 @@
 //! and `netlink` interaction to configure the network device to route received frames to the RX
 //! ring.
 //!
-//! The entrypoint to the library is an instance of [`xsk::Umem`].
+//! The entrypoint to the library is an instance of [`crate::Umem`].
 #![no_std]
 #![deny(missing_docs)]
 extern crate alloc;
 
 /// User-space side of one or multiple XDP sockets.
-pub mod xsk;
+mod xsk;
+
+pub use xsk::{
+    BufIdx, DeviceQueue, IfInfo, ReadComplete, ReadRx, RingCons, RingProd, RingRx, RingTx, Socket,
+    SocketConfig, Umem, UmemChunk, UmemConfig, User, WriteFill, WriteTx,
+};
+
 /// Bindings for XDP kernel-interface, including structs.
 pub mod xdp;
 
