@@ -1,7 +1,7 @@
 use crate::xdp::XdpDesc;
-use crate::xsk::{BufIdx, XksRingRx, XskDeviceQueue, XskRingCons, XskRingProd, XskRingTx};
+use crate::xsk::{BufIdx, DeviceQueue, RingCons, RingProd, RingRx, RingTx};
 
-impl XskDeviceQueue {
+impl DeviceQueue {
     /// Add some buffers to the fill ring.
     pub fn fill(&mut self, n: u32) -> WriteFill<'_> {
         WriteFill {
@@ -35,16 +35,16 @@ impl XskDeviceQueue {
     /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
     /// and avoid modifying it (unless you know what you're doing). It should be treated as a
     /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
-    /// `XskDeviceQueue` modifies a reused file descriptor that it assumes to own.
+    /// `DeviceQueue` modifies a reused file descriptor that it assumes to own.
     pub fn as_raw_fd(&self) -> libc::c_int {
         self.socket.fd.0
     }
 
     /// Query if the fill queue needs to be woken to proceed receiving.
     ///
-    /// This is only accurate if `XskUmem::XDP_BIND_NEED_WAKEUP` was set.
+    /// This is only accurate if `Umem::XDP_BIND_NEED_WAKEUP` was set.
     pub fn needs_wakeup(&self) -> bool {
-        self.fcq.prod.check_flags() & XskRingTx::XDP_RING_NEED_WAKEUP != 0
+        self.fcq.prod.check_flags() & RingTx::XDP_RING_NEED_WAKEUP != 0
     }
 
     /// Poll the fill queue descriptor, to wake it up.
@@ -61,13 +61,13 @@ impl XskDeviceQueue {
     }
 }
 
-impl Drop for XskDeviceQueue {
+impl Drop for DeviceQueue {
     fn drop(&mut self) {
         self.devices.remove(&self.socket.info.ctx);
     }
 }
 
-impl XksRingRx {
+impl RingRx {
     /// Receive some buffers.
     ///
     /// Returns an iterator over the descriptors.
@@ -81,9 +81,9 @@ impl XksRingRx {
     /// Query the number of available descriptors.
     ///
     /// This operation is advisory only. It performs a __relaxed__ atomic load of the kernel
-    /// producer. An `acquire` barrier, such as performed by [`XksRingRx::receive`], is always
-    /// needed before reading any of the written descriptors to ensure that these reads do not race
-    /// with the kernel's writes.
+    /// producer. An `acquire` barrier, such as performed by [`RingRx::receive`], is always needed
+    /// before reading any of the written descriptors to ensure that these reads do not race with
+    /// the kernel's writes.
     pub fn available(&self) -> u32 {
         self.ring.count_pending()
     }
@@ -94,14 +94,14 @@ impl XksRingRx {
     ///
     /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
     /// and avoid modifying it (unless you know what you're doing). It should be treated as a
-    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
-    /// `XksRingRx` modifies a reused file descriptor that it assumes to own...
+    /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the `RingRx`
+    /// modifies a reused file descriptor that it assumes to own...
     pub fn as_raw_fd(&self) -> libc::c_int {
         self.fd.0
     }
 }
 
-impl XskRingTx {
+impl RingTx {
     const XDP_RING_NEED_WAKEUP: u32 = 1 << 0;
 
     /// Transmit some buffers.
@@ -121,7 +121,7 @@ impl XskRingTx {
 
     /// Query if the transmit queue needs to be woken to proceed receiving.
     ///
-    /// This is only accurate if `XskUmem::XDP_BIND_NEED_WAKEUP` was set.
+    /// This is only accurate if `Umem::XDP_BIND_NEED_WAKEUP` was set.
     pub fn needs_wakeup(&self) -> bool {
         self.ring.check_flags() & Self::XDP_RING_NEED_WAKEUP != 0
     }
@@ -148,7 +148,7 @@ impl XskRingTx {
     /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
     /// and avoid modifying it (unless you know what you're doing). It should be treated as a
     /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
-    /// `XskRingTx` modifies a reused file descriptor that it assumes to own (for instance, `wake`
+    /// `RingTx` modifies a reused file descriptor that it assumes to own (for instance, `wake`
     /// sends a message to it).
     pub fn as_raw_fd(&self) -> libc::c_int {
         self.fd.0
@@ -166,38 +166,38 @@ struct BufIdxIter {
 
 /// A writer to a fill queue.
 ///
-/// Created with [`XskDeviceQueue::fill`].
+/// Created with [`DeviceQueue::fill`].
 pub struct WriteFill<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
-    queue: &'queue mut XskRingProd,
+    queue: &'queue mut RingProd,
 }
 
 /// A reader from a completion queue.
 ///
-/// Created with [`XskDeviceQueue::complete`].
+/// Created with [`DeviceQueue::complete`].
 pub struct ReadComplete<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
-    queue: &'queue mut XskRingCons,
+    queue: &'queue mut RingCons,
 }
 
 /// A writer to a transmission (TX) queue.
 ///
-/// Created with [`XskRingTx::transmit`].
+/// Created with [`RingTx::transmit`].
 pub struct WriteTx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
-    queue: &'queue mut XskRingProd,
+    queue: &'queue mut RingProd,
 }
 
 /// A reader from an receive (RX) queue.
 ///
-/// Created with [`XksRingRx::receive`].
+/// Created with [`RingRx::receive`].
 pub struct ReadRx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
-    queue: &'queue mut XskRingCons,
+    queue: &'queue mut RingCons,
 }
 
 impl Iterator for BufIdxIter {
@@ -212,7 +212,7 @@ impl Iterator for BufIdxIter {
 }
 
 impl BufIdxIter {
-    fn peek(queue: &mut XskRingCons, n: u32) -> Self {
+    fn peek(queue: &mut RingCons, n: u32) -> Self {
         let mut this = BufIdxIter {
             buffers: 0,
             remain: 0,
@@ -223,7 +223,7 @@ impl BufIdxIter {
         this
     }
 
-    fn reserve(queue: &mut XskRingProd, n: u32) -> Self {
+    fn reserve(queue: &mut RingProd, n: u32) -> Self {
         let mut this = BufIdxIter {
             buffers: 0,
             remain: 0,
@@ -234,7 +234,7 @@ impl BufIdxIter {
         this
     }
 
-    fn commit_prod(&mut self, queue: &mut XskRingProd) {
+    fn commit_prod(&mut self, queue: &mut RingProd) {
         // This contains an atomic write, which LLVM won't even try to optimize away.
         // But, as long as queues are filled there's a decent chance that we didn't manage to
         // reserve or fill a single buffer.
@@ -249,7 +249,7 @@ impl BufIdxIter {
         }
     }
 
-    fn release_cons(&mut self, queue: &mut XskRingCons) {
+    fn release_cons(&mut self, queue: &mut RingCons) {
         // See also `commit_prod`.
         if self.buffers > 0 {
             let count = self.buffers - self.remain;

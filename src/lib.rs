@@ -9,7 +9,7 @@
 //! and `netlink` interaction to configure the network device to route received frames to the RX
 //! ring.
 //!
-//! The entrypoint to the library is an instance of [`xsk::XskUmem`].
+//! The entrypoint to the library is an instance of [`xsk::Umem`].
 #![no_std]
 #![deny(missing_docs)]
 extern crate alloc;

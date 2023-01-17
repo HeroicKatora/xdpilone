@@ -1,9 +1,9 @@
 use alloc::sync::Arc;
 
+use crate::xsk::{IfInfo, Socket, SocketFd, Umem};
 use crate::Errno;
-use crate::xsk::{XskSocket, IfInfo, SocketFd, XskUmem};
 
-impl XskSocket {
+impl Socket {
     const SO_NETNS_COOKIE: libc::c_int = 71;
     const INIT_NS: u64 = 1;
 
@@ -14,7 +14,7 @@ impl XskSocket {
     }
 
     /// Create a socket using the FD of the `umem`.
-    pub fn with_shared(interface: &IfInfo, umem: &XskUmem) -> Result<Self, Errno> {
+    pub fn with_shared(interface: &IfInfo, umem: &Umem) -> Result<Self, Errno> {
         Self::with_xdp_socket(interface, umem.fd.clone())
     }
 
@@ -42,7 +42,7 @@ impl XskSocket {
         // Won't reallocate in practice.
         Arc::make_mut(&mut info).ctx.netnscookie = netnscookie;
 
-        Ok(XskSocket { fd, info })
+        Ok(Socket { fd, info })
     }
 }
 

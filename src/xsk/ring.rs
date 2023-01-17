@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 use core::{ops::RangeInclusive, ptr::NonNull};
 
 use crate::xdp::{XdpDesc, XdpRingOffsets};
-use crate::xsk::{BufIdx, SocketFd, SocketMmapOffsets, XskRing, XskRingCons, XskRingProd};
+use crate::xsk::{BufIdx, RingCons, RingProd, SocketFd, SocketMmapOffsets, XskRing};
 use crate::Errno;
 
 impl XskRing {
@@ -79,7 +79,7 @@ impl XskRing {
     }
 }
 
-impl XskRingProd {
+impl RingProd {
     /// # Safety
     ///
     /// The caller must only pass `fd` and `off` if they correspond as they were returned by the
@@ -97,7 +97,7 @@ impl XskRingProd {
             XskRing::XDP_UMEM_PGOFF_FILL_RING,
         )?;
 
-        Ok(XskRingProd { inner, mmap_addr })
+        Ok(RingProd { inner, mmap_addr })
     }
 
     /// # Safety
@@ -117,7 +117,7 @@ impl XskRingProd {
             XskRing::XDP_PGOFF_TX_RING,
         )?;
 
-        Ok(XskRingProd { inner, mmap_addr })
+        Ok(RingProd { inner, mmap_addr })
     }
 
     /// Return the address of an address descriptor.
@@ -229,7 +229,7 @@ impl XskRingProd {
     }
 }
 
-impl XskRingCons {
+impl RingCons {
     /// Create a completion ring.
     /// # Safety
     ///
@@ -248,7 +248,7 @@ impl XskRingCons {
             XskRing::XDP_UMEM_PGOFF_COMPLETION_RING,
         )?;
 
-        Ok(XskRingCons { inner, mmap_addr })
+        Ok(RingCons { inner, mmap_addr })
     }
 
     /// Create a receive ring.
@@ -269,7 +269,7 @@ impl XskRingCons {
             XskRing::XDP_PGOFF_RX_RING,
         )?;
 
-        Ok(XskRingCons { inner, mmap_addr })
+        Ok(RingCons { inner, mmap_addr })
     }
 
     /// Get a pointer to an address descriptor in the ring.
@@ -369,14 +369,14 @@ impl XskRingCons {
     }
 }
 
-impl Drop for XskRingProd {
+impl Drop for RingProd {
     fn drop(&mut self) {
         let len = super::ptr_len(self.mmap_addr.as_ptr());
         unsafe { libc::munmap(self.mmap_addr.as_ptr() as *mut _, len) };
     }
 }
 
-impl Drop for XskRingCons {
+impl Drop for RingCons {
     fn drop(&mut self) {
         let len = super::ptr_len(self.mmap_addr.as_ptr());
         unsafe { libc::munmap(self.mmap_addr.as_ptr() as *mut _, len) };
@@ -387,5 +387,5 @@ impl Drop for XskRingCons {
 // a different thread. Indeed, we hold no shared reference `&_` to any non-´Sync` resource which
 // makes this sound by definition.
 unsafe impl Send for XskRing {}
-unsafe impl Send for XskRingProd {}
-unsafe impl Send for XskRingCons {}
+unsafe impl Send for RingProd {}
+unsafe impl Send for RingCons {}

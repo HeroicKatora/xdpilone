@@ -5,9 +5,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::{num::NonZeroU32, ptr::NonNull};
 use xdpilone::xdp::XdpDesc;
-use xdpilone::xsk::{
-    BufIdx, IfInfo, XskSocket, XskSocketConfig, XskRingTx, XskUmem, XskUmemConfig,
-};
+use xdpilone::xsk::{BufIdx, IfInfo, RingTx, Socket, SocketConfig, Umem, UmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]
@@ -24,16 +22,16 @@ fn main() {
     let mem = NonNull::new(MEM.0.get() as *mut [u8]).unwrap();
 
     // Safety: we guarantee this mapping is aligned, and will be alive. It is static, after-all.
-    let umem = unsafe { XskUmem::new(XskUmemConfig::default(), mem) }.unwrap();
+    let umem = unsafe { Umem::new(UmemConfig::default(), mem) }.unwrap();
     let info = ifinfo(&args).unwrap();
 
     // Let's use that same file descriptor for our packet buffer operations on the specified
     // network interface. Umem + Fill/Complete + Rx/Tx will live on the same FD.
-    let sock = XskSocket::with_shared(&info, &umem).unwrap();
+    let sock = Socket::with_shared(&info, &umem).unwrap();
     // Get the fill/completion device (which handles the 'device queue').
     let device = umem.fq_cq(&sock).unwrap();
 
-    let rxtx_config = XskSocketConfig {
+    let rxtx_config = SocketConfig {
         rx_size: None,
         tx_size: NonZeroU32::new(1 << 12),
         bind_flags: 0,
@@ -41,9 +39,9 @@ fn main() {
 
     let mut tx_queues = vec![];
 
-    let mut sock = Some(XskSocket::with_shared(&info, &umem).unwrap());
+    let mut sock = Some(Socket::with_shared(&info, &umem).unwrap());
     for _ in 0..(args.threads.map_or(1, NonZeroU32::get)) {
-        let sock = sock.take().unwrap_or_else(|| XskSocket::new(&info).unwrap());
+        let sock = sock.take().unwrap_or_else(|| Socket::new(&info).unwrap());
 
         // Configure our receive/transmit queues.
         let rxtx = umem.rx_tx(&sock, &rxtx_config).unwrap();
@@ -130,7 +128,7 @@ fn main() {
         cq_log_batch[32 - comp_now.leading_zeros() as usize] += 1;
     };
 
-    let sender = |mut tx: XskRingTx| {
+    let sender = |mut tx: RingTx| {
         let mut stall_threshold = WAKE_THRESHOLD;
         loop {
             if sent.load(Ordering::Relaxed) >= total && completed.load(Ordering::Relaxed) >= total {

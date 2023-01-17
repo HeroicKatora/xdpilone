@@ -9,7 +9,7 @@
 
 /// Implementations for interface related operations.
 mod iface;
-/// Implementations for primitives `XskRing`, `XskRingProd`, `XskRingCons`.
+/// Implementations for primitives `XskRing`, `RingProd`, `RingCons`.
 mod ring;
 /// Implementations for sockets.
 mod socket;
@@ -61,7 +61,7 @@ struct XskRing {
 
 /// Static configuration describing a memory area to use for ring chunks.
 #[derive(Debug, Clone)]
-pub struct XskUmemConfig {
+pub struct UmemConfig {
     /// Number of entries in the fill queue.
     pub fill_size: u32,
     /// Number of entries in the completion queue.
@@ -76,9 +76,9 @@ pub struct XskUmemConfig {
 
 /// Configuration for a created socket.
 ///
-/// Passed to [`XskUmem::rx_tx`]
+/// Passed to [`Umem::rx_tx`]
 #[derive(Debug, Default, Clone)]
-pub struct XskSocketConfig {
+pub struct SocketConfig {
     /// The number of receive descriptors in the ring.
     pub rx_size: Option<NonZeroU32>,
     /// The number of transmit descriptors in the ring.
@@ -93,7 +93,7 @@ pub struct XskSocketConfig {
 /// communication or queues.
 ///
 /// Compared to `libxdp` there no link to the queues is stored. Such a struct would necessitate
-/// thread-safe access to the ring's producer and consumer queues. Instead, a `XskDeviceQueue` is the
+/// thread-safe access to the ring's producer and consumer queues. Instead, a `DeviceQueue` is the
 /// owner of a device queue's fill/completion ring, but _not_ receive and transmission rings. All
 /// other sockets with the same interface/queue depend on it but have their own packet rings.
 ///
@@ -106,11 +106,11 @@ pub struct XskSocketConfig {
 /// The controller of the fill/completion pair also controls the associated bpf program which maps
 /// packets onto the set of sockets (aka. 'XSKMAP').
 // Implementation: <xsk/umem.rs>
-pub struct XskUmem {
+pub struct Umem {
     umem_area: NonNull<[u8]>,
-    config: XskUmemConfig,
+    config: UmemConfig,
     fd: Arc<SocketFd>,
-    devices: XskDeviceControl,
+    devices: DeviceControl,
 }
 
 /// A raw pointer to a specific chunk in a Umem.
@@ -118,7 +118,7 @@ pub struct XskUmem {
 /// It's unsafe to access the frame, by design. All aspects of _managing_ the contents of the
 /// kernel-shared memory are left to the user of the library.
 #[derive(Clone, Copy, Debug)]
-pub struct XskUmemChunk {
+pub struct UmemChunk {
     /// The address range associated with the chunk.
     pub addr: NonNull<[u8]>,
     /// The absolute offset of this chunk from the start of the Umem.
@@ -128,7 +128,7 @@ pub struct XskUmemChunk {
 }
 
 #[derive(Clone)]
-struct XskDeviceControl {
+struct DeviceControl {
     /// The tracker, not critical for memory safety (here anyways) but correctness.
     inner: Arc<dyn ControlSet>,
 }
@@ -143,7 +143,7 @@ trait ControlSet: Send + Sync + 'static {
 /// One prepared socket for a receive/transmit pair.
 ///
 /// Note: it is not yet _bound_ to a specific `PF_XDP` address (device queue).
-pub struct XskSocket {
+pub struct Socket {
     info: Arc<IfInfo>,
     fd: Arc<SocketFd>,
 }
@@ -153,25 +153,25 @@ pub struct XskSocket {
 /// A socket is more specifically a set of receive and transmit queues for packets (mapping to some
 /// underlying hardware mapping those bytes with a network). The fill and completion queue can, in
 /// theory, be shared with other sockets of the same `Umem`.
-pub struct XskDeviceQueue {
+pub struct DeviceQueue {
     /// Fill and completion queues.
-    fcq: XskDeviceRings,
+    fcq: DeviceRings,
     /// This is also a socket.
-    socket: XskSocket,
+    socket: Socket,
     /// Reference to de-register.
-    devices: XskDeviceControl,
+    devices: DeviceControl,
 }
 
 /// An owner of receive/transmit queues.
 ///
-/// This represents a configured version of the raw `XskSocket`. It allows you to map the required
-/// rings and _then_ [`XskUmem::bind`] the socket, enabling the operations of the queues with the
+/// This represents a configured version of the raw `Socket`. It allows you to map the required
+/// rings and _then_ [`Umem::bind`] the socket, enabling the operations of the queues with the
 /// interface.
-pub struct XskUser {
+pub struct User {
     /// A clone of the socket it was created from.
-    socket: XskSocket,
+    socket: Socket,
     /// The configuration with which it was created.
-    config: Arc<XskSocketConfig>,
+    config: Arc<SocketConfig>,
     /// A cached version of the map describing receive/tranmit queues.
     map: SocketMmapOffsets,
 }
@@ -180,8 +180,8 @@ pub struct XskUser {
 ///
 /// This also maintains the mmap of the associated queue.
 // Implemented in <xsk/user.rs>
-pub struct XksRingRx {
-    ring: XskRingCons,
+pub struct RingRx {
+    ring: RingCons,
     fd: Arc<SocketFd>,
 }
 
@@ -189,8 +189,8 @@ pub struct XksRingRx {
 ///
 /// This also maintains the mmap of the associated queue.
 // Implemented in <xsk/user.rs>
-pub struct XskRingTx {
-    ring: XskRingProd,
+pub struct RingTx {
+    ring: RingProd,
     fd: Arc<SocketFd>,
 }
 
@@ -214,9 +214,9 @@ pub(crate) struct IfCtx {
     netnscookie: u64,
 }
 
-pub(crate) struct XskDeviceRings {
-    pub prod: XskRingProd,
-    pub cons: XskRingCons,
+pub(crate) struct DeviceRings {
+    pub prod: RingProd,
+    pub cons: RingCons,
     // Proof that we obtained this. Not sure if and where we'd use it.
     #[allow(dead_code)]
     pub(crate) map: SocketMmapOffsets,
@@ -229,8 +229,8 @@ pub(crate) struct SocketMmapOffsets {
 
 /// An index to an XDP buffer.
 ///
-/// Usually passed from a call of reserved or available buffers(in [`XskRingProd`] and
-/// [`XskRingCons`] respectively) to one of the access functions. This resolves the raw index to a
+/// Usually passed from a call of reserved or available buffers(in [`RingProd`] and
+/// [`RingCons`] respectively) to one of the access functions. This resolves the raw index to a
 /// memory address in the ring buffer.
 ///
 /// This is _not_ a pure offset, a masking is needed to access the raw offset! The kernel requires
@@ -253,7 +253,7 @@ pub struct BufIdx(pub u32);
 ///
 /// Here, user space maintains the write head and the kernel the read tail.
 #[derive(Debug)]
-pub struct XskRingProd {
+pub struct RingProd {
     inner: XskRing,
     mmap_addr: NonNull<[u8]>,
 }
@@ -262,14 +262,14 @@ pub struct XskRingProd {
 ///
 /// Here, kernel maintains the write head and user space the read tail.
 #[derive(Debug)]
-pub struct XskRingCons {
+pub struct RingCons {
     inner: XskRing,
     mmap_addr: NonNull<[u8]>,
 }
 
-impl Default for XskUmemConfig {
+impl Default for UmemConfig {
     fn default() -> Self {
-        XskUmemConfig {
+        UmemConfig {
             fill_size: 1 << 11,
             complete_size: 1 << 11,
             frame_size: 1 << 12,

@@ -122,7 +122,7 @@ impl SocketMmapOffsets {
             libc::getsockopt(
                 sock.0,
                 super::SOL_XDP,
-                super::XskUmem::XDP_MMAP_OFFSETS,
+                super::Umem::XDP_MMAP_OFFSETS,
                 (&mut off) as *mut _ as *mut libc::c_void,
                 &mut optlen,
             )
@@ -167,7 +167,7 @@ impl XdpStatistics {
             libc::getsockopt(
                 sock.0,
                 super::SOL_XDP,
-                super::XskUmem::XDP_STATISTICS,
+                super::Umem::XDP_STATISTICS,
                 self as *mut _ as *mut libc::c_void,
                 &mut optlen,
             )

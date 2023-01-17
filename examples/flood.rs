@@ -4,7 +4,7 @@
 //! not use in production and aim at a network interface with care!
 use core::{mem::MaybeUninit, num::NonZeroU32, ptr::NonNull};
 use xdpilone::xdp::XdpDesc;
-use xdpilone::xsk::{BufIdx, IfInfo, XskSocket, XskSocketConfig, XskUmem, XskUmemConfig};
+use xdpilone::xsk::{BufIdx, IfInfo, Socket, SocketConfig, Umem, UmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]
@@ -18,12 +18,12 @@ fn main() {
     let mem = NonNull::new(Box::leak(alloc).0.as_mut_ptr()).unwrap();
 
     // Safety: we guarantee this mapping is aligned, and will be alive. It is static, after-all.
-    let umem = unsafe { XskUmem::new(XskUmemConfig::default(), mem) }.unwrap();
+    let umem = unsafe { Umem::new(UmemConfig::default(), mem) }.unwrap();
     let info = ifinfo(&args).unwrap();
 
     // Let's use that same file descriptor for our packet buffer operations on the specified
     // network interface. Umem + Fill/Complete + Rx/Tx will live on the same FD.
-    let sock = XskSocket::with_shared(&info, &umem).unwrap();
+    let sock = Socket::with_shared(&info, &umem).unwrap();
     // Get the fill/completion device (which handles the 'device queue').
     let device = umem.fq_cq(&sock).unwrap();
 
@@ -31,11 +31,10 @@ fn main() {
     let rxtx = umem
         .rx_tx(
             &sock,
-            &XskSocketConfig {
+            &SocketConfig {
                 rx_size: None,
                 tx_size: NonZeroU32::new(1 << 14),
-                bind_flags: XskSocketConfig::XDP_BIND_ZEROCOPY
-                    | XskSocketConfig::XDP_BIND_NEED_WAKEUP,
+                bind_flags: SocketConfig::XDP_BIND_ZEROCOPY | SocketConfig::XDP_BIND_NEED_WAKEUP,
             },
         )
         .unwrap();

@@ -5,9 +5,8 @@ use alloc::sync::Arc;
 
 use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpUmemReg};
 use crate::xsk::{
-    ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XksRingRx, XskDeviceControl,
-    XskDeviceQueue, XskDeviceRings, XskRingCons, XskRingProd, XskRingTx, XskSocket,
-    XskSocketConfig, XskUmem, XskUmemChunk, XskUmemConfig, XskUser,
+    ptr_len, BufIdx, DeviceControl, DeviceQueue, DeviceRings, IfCtx, RingCons, RingProd, RingRx,
+    RingTx, Socket, SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk, UmemConfig, User,
 };
 use crate::Errno;
 
@@ -35,7 +34,7 @@ impl BufIdx {
     }
 }
 
-impl XskUmem {
+impl Umem {
     /* Socket options for XDP */
     pub(crate) const XDP_MMAP_OFFSETS: libc::c_int = 1;
     pub(crate) const XDP_RX_RING: libc::c_int = 2;
@@ -57,7 +56,7 @@ impl XskUmem {
     ///
     /// The area must be page aligned and not exceed i64::MAX in length (on future systems where
     /// you could).
-    pub unsafe fn new(config: XskUmemConfig, area: NonNull<[u8]>) -> Result<XskUmem, Errno> {
+    pub unsafe fn new(config: UmemConfig, area: NonNull<[u8]>) -> Result<Umem, Errno> {
         fn is_page_aligned(area: NonNull<[u8]>) -> bool {
             let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
             // TODO: use `addr()` as we don't need to expose the pointer here. Just the address as
@@ -79,7 +78,7 @@ impl XskUmem {
             "Unhandled address space calculation"
         );
 
-        let devices = XskDeviceControl {
+        let devices = DeviceControl {
             inner: Arc::new(SpinLockedControlSet::default()),
         };
 
@@ -87,7 +86,7 @@ impl XskUmem {
         // 1. Create a new XDP socket in the kernel.
         // 2. Configure it with the area and size.
         // Safety: correct `socket` call.
-        let umem = XskUmem {
+        let umem = Umem {
             config,
             fd: Arc::new(SocketFd::new()?),
             umem_area: area,
@@ -105,7 +104,7 @@ impl XskUmem {
     /// No requirements. However, please ensure that _use_ of the pointer is done properly. The
     /// pointer is guaranteed to be derived from the `area` passed in the constructor. The method
     /// guarantees that it does not _access_ any of the pointers in this process.
-    pub fn frame(&self, idx: BufIdx) -> Option<XskUmemChunk> {
+    pub fn frame(&self, idx: BufIdx) -> Option<UmemChunk> {
         let pitch: u32 = self.config.frame_size;
         let idx: u32 = idx.0;
         let area_size = ptr_len(self.umem_area.as_ptr()) as u64;
@@ -127,7 +126,7 @@ impl XskUmem {
         debug_assert!(!base.is_null(), "UB: offsetting area within produced NULL");
         let slice = core::ptr::slice_from_raw_parts_mut(base, pitch as usize);
         let addr = unsafe { NonNull::new_unchecked(slice) };
-        Some(XskUmemChunk { addr, offset })
+        Some(UmemChunk { addr, offset })
     }
 
     /// Count the number of available data frames.
@@ -137,7 +136,7 @@ impl XskUmem {
         u32::try_from(count).unwrap_or(u32::MAX)
     }
 
-    fn configure(this: &XskUmem) -> Result<(), Errno> {
+    fn configure(this: &Umem) -> Result<(), Errno> {
         let mut mr = XdpUmemReg::default();
         mr.addr = this.umem_area.as_ptr() as *mut u8 as u64;
         mr.len = ptr_len(this.umem_area.as_ptr()) as u64;
@@ -169,12 +168,12 @@ impl XskUmem {
     /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
     /// code is written under the assumption that only one controller/writer for the user-space
     /// portions of each queue is active at a time. The kernel won't care about your broken code.
-    pub fn fq_cq(&self, interface: &XskSocket) -> Result<XskDeviceQueue, Errno> {
+    pub fn fq_cq(&self, interface: &Socket) -> Result<DeviceQueue, Errno> {
         if !self.devices.insert(interface.info.ctx) {
             return Err(Errno(libc::EINVAL));
         }
 
-        struct DropableDevice<'info>(&'info IfCtx, &'info XskDeviceControl);
+        struct DropableDevice<'info>(&'info IfCtx, &'info DeviceControl);
 
         impl Drop for DropableDevice<'_> {
             fn drop(&mut self) {
@@ -192,12 +191,12 @@ impl XskUmem {
         // FIXME: should we be configured the `cached_consumer` and `cached_producer` and
         // potentially other values, here? The setup produces a very rough clone of _just_ the ring
         // itself and none of the logic beyond.
-        let prod = unsafe { XskRingProd::fill(sock, &map, self.config.fill_size) }?;
-        let cons = unsafe { XskRingCons::comp(sock, &map, self.config.complete_size) }?;
+        let prod = unsafe { RingProd::fill(sock, &map, self.config.fill_size) }?;
+        let cons = unsafe { RingCons::comp(sock, &map, self.config.complete_size) }?;
 
-        let device = XskDeviceQueue {
-            fcq: XskDeviceRings { map, cons, prod },
-            socket: XskSocket {
+        let device = DeviceQueue {
+            fcq: DeviceRings { map, cons, prod },
+            socket: Socket {
                 info: interface.info.clone(),
                 fd: interface.fd.clone(),
             },
@@ -215,13 +214,13 @@ impl XskUmem {
     ///
     /// Note: if the underlying socket is shared then this will also bind other objects that share
     /// the underlying socket file descriptor, this is intended.
-    pub fn rx_tx(&self, interface: &XskSocket, config: &XskSocketConfig) -> Result<XskUser, Errno> {
+    pub fn rx_tx(&self, interface: &Socket, config: &SocketConfig) -> Result<User, Errno> {
         let sock = &*interface.fd;
         Self::configure_rt(sock, config)?;
         let map = SocketMmapOffsets::new(sock)?;
 
-        Ok(XskUser {
-            socket: XskSocket {
+        Ok(User {
+            socket: Socket {
                 info: interface.info.clone(),
                 fd: interface.fd.clone(),
             },
@@ -232,10 +231,10 @@ impl XskUmem {
 
     /// Activate rx/tx queues by binding the socket to a device.
     ///
-    /// Please note that calls to [`XskUser::map_rx`] and [`XskUser::map_tx`] will fail once the
+    /// Please note that calls to [`User::map_rx`] and [`User::map_tx`] will fail once the
     /// device is bound! Also, the fill and completion queues of the interface/queue must be setup
     /// already.
-    pub fn bind(&self, interface: &XskUser) -> Result<(), Errno> {
+    pub fn bind(&self, interface: &User) -> Result<(), Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,
             queue_id: interface.socket.info.ctx.queue_id,
@@ -246,7 +245,7 @@ impl XskUmem {
         // the interface indicated.
 
         if interface.socket.fd.0 != self.fd.0 {
-            sxdp.flags = interface.config.bind_flags | XskSocketConfig::XDP_BIND_SHARED_UMEM;
+            sxdp.flags = interface.config.bind_flags | SocketConfig::XDP_BIND_SHARED_UMEM;
             sxdp.shared_umem_fd = self.fd.0 as u32;
         }
 
@@ -264,12 +263,12 @@ impl XskUmem {
         Ok(())
     }
 
-    pub(crate) fn configure_cq(fd: &SocketFd, config: &XskUmemConfig) -> Result<(), Errno> {
+    pub(crate) fn configure_cq(fd: &SocketFd, config: &UmemConfig) -> Result<(), Errno> {
         if unsafe {
             libc::setsockopt(
                 fd.0,
                 super::SOL_XDP,
-                XskUmem::XDP_UMEM_COMPLETION_RING,
+                Umem::XDP_UMEM_COMPLETION_RING,
                 (&config.complete_size) as *const _ as *const libc::c_void,
                 core::mem::size_of_val(&config.complete_size) as libc::socklen_t,
             )
@@ -282,7 +281,7 @@ impl XskUmem {
             libc::setsockopt(
                 fd.0,
                 super::SOL_XDP,
-                XskUmem::XDP_UMEM_FILL_RING,
+                Umem::XDP_UMEM_FILL_RING,
                 (&config.fill_size) as *const _ as *const libc::c_void,
                 core::mem::size_of_val(&config.fill_size) as libc::socklen_t,
             )
@@ -294,13 +293,13 @@ impl XskUmem {
         Ok(())
     }
 
-    pub(crate) fn configure_rt(fd: &SocketFd, config: &XskSocketConfig) -> Result<(), Errno> {
+    pub(crate) fn configure_rt(fd: &SocketFd, config: &SocketConfig) -> Result<(), Errno> {
         if let Some(num) = config.rx_size {
             if unsafe {
                 libc::setsockopt(
                     fd.0,
                     super::SOL_XDP,
-                    XskUmem::XDP_RX_RING,
+                    Umem::XDP_RX_RING,
                     (&num) as *const _ as *const libc::c_void,
                     core::mem::size_of_val(&num) as libc::socklen_t,
                 )
@@ -315,7 +314,7 @@ impl XskUmem {
                 libc::setsockopt(
                     fd.0,
                     super::SOL_XDP,
-                    XskUmem::XDP_TX_RING,
+                    Umem::XDP_TX_RING,
                     (&num) as *const _ as *const libc::c_void,
                     core::mem::size_of_val(&num) as libc::socklen_t,
                 )
@@ -329,7 +328,7 @@ impl XskUmem {
     }
 }
 
-impl XskDeviceQueue {
+impl DeviceQueue {
     /// Get the statistics of this XDP socket.
     pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
         XdpStatistics::new(&*self.socket.fd)
@@ -344,7 +343,7 @@ impl XskDeviceQueue {
     }
 }
 
-impl XskUser {
+impl User {
     /// Get the statistics of this XDP socket.
     pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
         XdpStatistics::new(&*self.socket.fd)
@@ -356,10 +355,10 @@ impl XskUser {
     ///
     /// FIXME: we allow mapping the ring more than once. Not a memory safety problem afaik, but a
     /// correctness problem.
-    pub fn map_rx(&self) -> Result<XksRingRx, Errno> {
+    pub fn map_rx(&self) -> Result<RingRx, Errno> {
         let rx_size = self.config.rx_size.ok_or(Errno(-libc::EINVAL))?.get();
-        let ring = unsafe { XskRingCons::rx(&self.socket.fd, &self.map, rx_size) }?;
-        Ok(XksRingRx {
+        let ring = unsafe { RingCons::rx(&self.socket.fd, &self.map, rx_size) }?;
+        Ok(RingRx {
             fd: self.socket.fd.clone(),
             ring,
         })
@@ -371,18 +370,18 @@ impl XskUser {
     ///
     /// FIXME: we allow mapping the ring more than once. Not a memory safety problem afaik, but a
     /// correctness problem.
-    pub fn map_tx(&self) -> Result<XskRingTx, Errno> {
+    pub fn map_tx(&self) -> Result<RingTx, Errno> {
         let tx_size = self.config.tx_size.ok_or(Errno(-libc::EINVAL))?.get();
-        let ring = unsafe { XskRingProd::tx(&self.socket.fd, &self.map, tx_size) }?;
-        Ok(XskRingTx {
+        let ring = unsafe { RingProd::tx(&self.socket.fd, &self.map, tx_size) }?;
+        Ok(RingTx {
             fd: self.socket.fd.clone(),
             ring,
         })
     }
 }
 
-impl XskSocketConfig {
-    /// Flag-bit for [`XskUmem::bind`] that the descriptor is shared.
+impl SocketConfig {
+    /// Flag-bit for [`Umem::bind`] that the descriptor is shared.
     ///
     /// Generally, this flag need not be passed directly. Instead, it is set within by the library
     /// when the same `Umem` is used for multiple interface/queue combinations.
@@ -393,7 +392,7 @@ impl XskSocketConfig {
     pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
     /// Enable support for need wakeup.
     ///
-    /// Needs to be set for [`XskDeviceQueue::needs_wakeup`] and [`XskRingTx::needs_wakeup`].
+    /// Needs to be set for [`DeviceQueue::needs_wakeup`] and [`RingTx::needs_wakeup`].
     pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
 }
 
@@ -402,7 +401,7 @@ struct SpinLockedControlSet {
     inner: RwLock<BTreeSet<IfCtx>>,
 }
 
-impl core::ops::Deref for XskDeviceControl {
+impl core::ops::Deref for DeviceControl {
     type Target = dyn super::ControlSet;
     fn deref(&self) -> &Self::Target {
         &*self.inner
@@ -426,7 +425,7 @@ impl super::ControlSet for SpinLockedControlSet {
     }
 }
 
-impl XskUmemChunk {
+impl UmemChunk {
     /// Turn this whole chunk into a concrete descriptor for the transmit ring.
     ///
     /// If you've the address or offset are not as returned by the ring then the result is
