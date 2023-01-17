@@ -47,20 +47,6 @@ impl XskUmem {
     #[allow(dead_code)]
     pub(crate) const XDP_OPTIONS: libc::c_int = 8;
 
-    /// Flag-bit for [`bind`] that the descriptor is shared.
-    ///
-    /// Generally, this flag need not be passed directly. Instead, it is set within by the library
-    /// when the same `Umem` is used for multiple interface/queue combinations.
-    pub const XDP_BIND_SHARED_UMEM: u16 = 1 << 0;
-    /// Force copy-mode.
-    pub const XDP_BIND_COPY: u16 = 1 << 1;
-    /// Force zero-copy-mode.
-    pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
-    /// Enable support for need wakeup.
-    ///
-    /// Needs to be set for [`XskDeviceQueue::needs_wakeup`] and [`XskTxRing::needs_wakeup`].
-    pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
-
     /// Create a new Umem ring.
     ///
     /// # Safety
@@ -246,8 +232,9 @@ impl XskUmem {
 
     /// Activate rx/tx queues by binding the socket to a device.
     ///
-    /// Please note that calls to `map_rx` and `map_tx` will fail while the device is bound! Also,
-    /// the fill and completion queues of the interface/queue must be setup already.
+    /// Please note that calls to [`XskUser::map_rx`] and [`XskUser::map_tx`] will fail once the
+    /// device is bound! Also, the fill and completion queues of the interface/queue must be setup
+    /// already.
     pub fn bind(&self, interface: &XskUser) -> Result<(), Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,
@@ -259,7 +246,7 @@ impl XskUmem {
         // the interface indicated.
 
         if interface.socket.fd.0 != self.fd.0 {
-            sxdp.flags = interface.config.bind_flags | Self::XDP_BIND_SHARED_UMEM;
+            sxdp.flags = interface.config.bind_flags | XskSocketConfig::XDP_BIND_SHARED_UMEM;
             sxdp.shared_umem_fd = self.fd.0 as u32;
         }
 
@@ -392,6 +379,22 @@ impl XskUser {
             ring,
         })
     }
+}
+
+impl XskSocketConfig {
+    /// Flag-bit for [`XskUmem::bind`] that the descriptor is shared.
+    ///
+    /// Generally, this flag need not be passed directly. Instead, it is set within by the library
+    /// when the same `Umem` is used for multiple interface/queue combinations.
+    pub const XDP_BIND_SHARED_UMEM: u16 = 1 << 0;
+    /// Force copy-mode.
+    pub const XDP_BIND_COPY: u16 = 1 << 1;
+    /// Force zero-copy-mode.
+    pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
+    /// Enable support for need wakeup.
+    ///
+    /// Needs to be set for [`XskDeviceQueue::needs_wakeup`] and [`XskTxRing::needs_wakeup`].
+    pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
 }
 
 #[derive(Default)]

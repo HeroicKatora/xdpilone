@@ -268,11 +268,14 @@ impl WriteFill<'_> {
 
     /// Fill one device descriptor to be filled.
     ///
-    /// A descriptor is an offset in the respective Umem's memory. Any address within a chunk can
+    /// A descriptor is an offset in the respective Umem's memory. Any offset within a chunk can
     /// be used to mark the chunk as available for fill. The kernel will overwrite the contents
     /// arbitrarily until the chunk is returned via the RX queue.
-    pub fn insert_once(&mut self, nr: u64) -> u32 {
-        self.insert(core::iter::once(nr))
+    ///
+    /// Returns if the insert was successful, that is false if the ring is full. It's guaranteed
+    /// that the first [`WriteFill::capacity`] inserts with this function succeed.
+    pub fn insert_once(&mut self, nr: u64) -> bool {
+        self.insert(core::iter::once(nr)) > 0
     }
 
     /// Fill additional slots that were reserved.
@@ -339,11 +342,10 @@ impl WriteTx<'_> {
 
     /// Insert a chunk descriptor to be sent.
     ///
-    /// Returns `1` if successful and `0` if the ring is full. (Return type is only for consistency
-    /// with [`insert`]). It's guaranteed that the first [`capacity`] inserts with this function
-    /// succeed.
-    pub fn insert_once(&mut self, nr: XdpDesc) -> u32 {
-        self.insert(core::iter::once(nr))
+    /// Returns if the insert was successful, that is false if the ring is full. It's guaranteed
+    /// that the first [`WriteTx::capacity`] inserts with this function succeed.
+    pub fn insert_once(&mut self, nr: XdpDesc) -> bool {
+        self.insert(core::iter::once(nr)) > 0
     }
 
     /// Fill the transmit ring from an iterator.

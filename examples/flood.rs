@@ -34,7 +34,8 @@ fn main() {
             &XskSocketConfig {
                 rx_size: None,
                 tx_size: NonZeroU32::new(1 << 14),
-                bind_flags: XskUmem::XDP_BIND_ZEROCOPY | XskUmem::XDP_BIND_NEED_WAKEUP,
+                bind_flags: XskSocketConfig::XDP_BIND_ZEROCOPY
+                    | XskSocketConfig::XDP_BIND_NEED_WAKEUP,
             },
         )
         .unwrap();

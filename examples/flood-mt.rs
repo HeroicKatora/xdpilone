@@ -36,8 +36,6 @@ fn main() {
     let rxtx_config = XskSocketConfig {
         rx_size: None,
         tx_size: NonZeroU32::new(1 << 12),
-        lib_flags: 0,
-        xdp_flags: 0,
         bind_flags: 0,
     };
 
