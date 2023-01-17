@@ -59,13 +59,14 @@ struct XskRing {
     flags: NonNull<u32>,
 }
 
+/// Static configuration describing a memory area to use for ring chunks.
 #[derive(Debug, Clone)]
 pub struct XskUmemConfig {
     /// Number of entries in the fill queue.
     pub fill_size: u32,
     /// Number of entries in the completion queue.
     pub complete_size: u32,
-    /// Size of data frames in the queues.
+    /// Size of data chunks in each of the ring queues.
     pub frame_size: u32,
     /// Reserved area at the start of the kernel area.
     pub headroom: u32,
@@ -73,15 +74,16 @@ pub struct XskUmemConfig {
     pub flags: u32,
 }
 
+/// Configuration for a created socket.
+///
+/// Passed to [`XskUmem::rx_tx`]
 #[derive(Debug, Default, Clone)]
 pub struct XskSocketConfig {
+    /// The number of receive descriptors in the ring.
     pub rx_size: Option<NonZeroU32>,
+    /// The number of transmit descriptors in the ring.
     pub tx_size: Option<NonZeroU32>,
-    /// Flags to pass on to libxdp/libbpf.
-    /// FIXME: but we're not using them?
-    #[allow(dead_code)]
-    pub lib_flags: u32,
-    pub xdp_flags: u32,
+    /// Additional flags to pass to the `bind` call as part of `sockaddr_xdp`.
     pub bind_flags: u16,
 }
 
@@ -111,12 +113,17 @@ pub struct XskUmem {
     devices: XskDeviceControl,
 }
 
-/// A raw pointer to a specific frame in a Umem.
+/// A raw pointer to a specific chunk in a Umem.
 ///
 /// It's unsafe to access the frame, by design. All aspects of _managing_ the contents of the
 /// kernel-shared memory are left to the user of the library.
-pub struct XskUmemFrame {
+#[derive(Clone, Copy, Debug)]
+pub struct XskUmemChunk {
+    /// The address range associated with the chunk.
     pub addr: NonNull<[u8]>,
+    /// The absolute offset of this chunk from the start of the Umem.
+    ///
+    /// This is the basis of the address calculation shared with the kernel.
     pub offset: u64,
 }
 
@@ -206,9 +213,11 @@ pub(crate) struct IfCtx {
     netnscookie: u64,
 }
 
-pub struct XskDeviceRings {
+pub(crate) struct XskDeviceRings {
     pub prod: XskRingProd,
     pub cons: XskRingCons,
+    // Proof that we obtained this. Not sure if and where we'd use it.
+    #[allow(dead_code)]
     pub(crate) map: SocketMmapOffsets,
 }
 

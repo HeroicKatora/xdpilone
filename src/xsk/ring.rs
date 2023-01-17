@@ -120,13 +120,25 @@ impl XskRingProd {
         Ok(XskRingProd { inner, mmap_addr })
     }
 
-    pub unsafe fn fill_addr(&self, idx: BufIdx) -> NonNull<u64> {
+    /// Return the address of an address descriptor.
+    ///
+    /// # Safety
+    ///
+    /// To be used only in fill and complete rings. Further, the caller guarantees that the `idx`
+    /// parameter is valid for the ring.
+    pub(crate) unsafe fn fill_addr(&self, idx: BufIdx) -> NonNull<u64> {
         let offset = (idx.0 & self.inner.mask) as isize;
         let base = self.inner.ring.cast::<u64>().as_ptr();
         unsafe { NonNull::new_unchecked(base.offset(offset)) }
     }
 
-    pub unsafe fn tx_desc(&self, idx: BufIdx) -> NonNull<XdpDesc> {
+    /// Return the address of a buffer descriptor.
+    ///
+    /// # Safety
+    ///
+    /// To be used only in fill and complete rings. Further, the caller guarantees that the `idx`
+    /// parameter is valid for the ring.
+    pub(crate) unsafe fn tx_desc(&self, idx: BufIdx) -> NonNull<XdpDesc> {
         let offset = (idx.0 & self.inner.mask) as isize;
         let base = self.inner.ring.cast::<XdpDesc>().as_ptr();
         unsafe { NonNull::new_unchecked(base.offset(offset)) }
@@ -198,6 +210,12 @@ impl XskRingProd {
             .store(cur.wrapping_add(nb), Ordering::Release);
     }
 
+    /// Get the raw difference between consumer and producer heads in shared memory.
+    ///
+    /// Both variables are loaded with _relaxed_ loads. No synchronization with any other memory
+    /// operations is implied by calling this method. For this, you would need make sure to have
+    /// some form of barrier, acquire on receiving and release on transmitting, for operations
+    /// within chunks.
     pub fn count_pending(&self) -> u32 {
         let comitted = self.inner.producer.load(Ordering::Relaxed);
         let consumed = self.inner.consumer.load(Ordering::Relaxed);
@@ -205,6 +223,7 @@ impl XskRingProd {
         comitted.wrapping_sub(consumed)
     }
 
+    /// Return the bits behind the `flags` register in the mmap.
     pub fn check_flags(&self) -> u32 {
         unsafe { *self.inner.flags.as_ptr() }
     }
@@ -252,15 +271,28 @@ impl XskRingCons {
 
         Ok(XskRingCons { inner, mmap_addr })
     }
+
+    /// Get a pointer to an address descriptor in the ring.
+    ///
+    /// # Safety
+    ///
+    /// This ring must be a Fill or Completion ring.
     pub unsafe fn comp_addr(&self, idx: BufIdx) -> NonNull<u64> {
         let offset = (idx.0 & self.inner.mask) as isize;
         let base = self.inner.ring.cast::<u64>().as_ptr();
+        // Safety: all offsets within `self.inner.mask` are valid in our mmap.
         unsafe { NonNull::new_unchecked(base.offset(offset)) }
     }
 
+    /// Get a pointer to an XDP frame descriptor in the ring.
+    ///
+    /// # Safety
+    ///
+    /// This ring must be a Receive or Transmit ring.
     pub unsafe fn rx_desc(&self, idx: BufIdx) -> NonNull<XdpDesc> {
         let offset = (idx.0 & self.inner.mask) as isize;
         let base = self.inner.ring.cast::<XdpDesc>().as_ptr();
+        // Safety: all offsets within `self.inner.mask` are valid in our mmap.
         unsafe { NonNull::new_unchecked(base.offset(offset)) }
     }
 
@@ -282,6 +314,12 @@ impl XskRingCons {
         available
     }
 
+    /// Get the raw difference between consumer and producer heads in shared memory.
+    ///
+    /// Both variables are loaded with _relaxed_ loads. No synchronization with any other memory
+    /// operations is implied by calling this method. For this, you would need make sure to have
+    /// some form of barrier, acquire on receiving and release on transmitting, for operations
+    /// within chunks.
     pub fn count_pending(&self) -> u32 {
         let available = self.inner.producer.load(Ordering::Relaxed);
         let consumed = self.inner.consumer.load(Ordering::Relaxed);
@@ -289,7 +327,7 @@ impl XskRingCons {
         available.wrapping_sub(consumed)
     }
 
-    pub fn peek(&mut self, nb: RangeInclusive<u32>, idx: &mut BufIdx) -> u32 {
+    pub(crate) fn peek(&mut self, nb: RangeInclusive<u32>, idx: &mut BufIdx) -> u32 {
         let (start, end) = (*nb.start(), *nb.end());
         let count = self.count_available(start);
 
@@ -325,6 +363,7 @@ impl XskRingCons {
             .store(cur.wrapping_add(nb), Ordering::Release);
     }
 
+    /// Return the flags, as indicated by the kernel in shared memory.
     pub fn check_flags(&self) -> u32 {
         unsafe { *self.inner.flags.as_ptr() }
     }

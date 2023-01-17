@@ -7,7 +7,7 @@ use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpUmemReg};
 use crate::xsk::{
     ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceControl, XskDeviceQueue,
     XskDeviceRings, XskRingCons, XskRingProd, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
-    XskUmem, XskUmemConfig, XskUmemFrame, XskUser,
+    XskUmem, XskUmemChunk, XskUmemConfig, XskUser,
 };
 use crate::Errno;
 
@@ -37,21 +37,28 @@ impl BufIdx {
 
 impl XskUmem {
     /* Socket options for XDP */
-    pub const XDP_MMAP_OFFSETS: libc::c_int = 1;
-    pub const XDP_RX_RING: libc::c_int = 2;
-    pub const XDP_TX_RING: libc::c_int = 3;
-    pub const XDP_UMEM_REG: libc::c_int = 4;
-    pub const XDP_UMEM_FILL_RING: libc::c_int = 5;
-    pub const XDP_UMEM_COMPLETION_RING: libc::c_int = 6;
-    pub const XDP_STATISTICS: libc::c_int = 7;
-    pub const XDP_OPTIONS: libc::c_int = 8;
+    pub(crate) const XDP_MMAP_OFFSETS: libc::c_int = 1;
+    pub(crate) const XDP_RX_RING: libc::c_int = 2;
+    pub(crate) const XDP_TX_RING: libc::c_int = 3;
+    pub(crate) const XDP_UMEM_REG: libc::c_int = 4;
+    pub(crate) const XDP_UMEM_FILL_RING: libc::c_int = 5;
+    pub(crate) const XDP_UMEM_COMPLETION_RING: libc::c_int = 6;
+    pub(crate) const XDP_STATISTICS: libc::c_int = 7;
+    #[allow(dead_code)]
+    pub(crate) const XDP_OPTIONS: libc::c_int = 8;
 
+    /// Flag-bit for [`bind`] that the descriptor is shared.
+    ///
+    /// Generally, this flag need not be passed directly. Instead, it is set within by the library
+    /// when the same `Umem` is used for multiple interface/queue combinations.
     pub const XDP_BIND_SHARED_UMEM: u16 = 1 << 0;
-    /* Force copy-mode */
+    /// Force copy-mode.
     pub const XDP_BIND_COPY: u16 = 1 << 1;
-    /* Force zero-copy mode */
+    /// Force zero-copy-mode.
     pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
-    /* Support for need wakeup */
+    /// Enable support for need wakeup.
+    ///
+    /// Needs to be set for [`XskDeviceQueue::needs_wakeup`] and [`XskTxRing::needs_wakeup`].
     pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
 
     /// Create a new Umem ring.
@@ -112,7 +119,7 @@ impl XskUmem {
     /// No requirements. However, please ensure that _use_ of the pointer is done properly. The
     /// pointer is guaranteed to be derived from the `area` passed in the constructor. The method
     /// guarantees that it does not _access_ any of the pointers in this process.
-    pub fn frame(&self, idx: BufIdx) -> Option<XskUmemFrame> {
+    pub fn frame(&self, idx: BufIdx) -> Option<XskUmemChunk> {
         let pitch: u32 = self.config.frame_size;
         let idx: u32 = idx.0;
         let area_size = ptr_len(self.umem_area.as_ptr()) as u64;
@@ -134,7 +141,7 @@ impl XskUmem {
         debug_assert!(!base.is_null(), "UB: offsetting area within produced NULL");
         let slice = core::ptr::slice_from_raw_parts_mut(base, pitch as usize);
         let addr = unsafe { NonNull::new_unchecked(slice) };
-        Some(XskUmemFrame { addr, offset })
+        Some(XskUmemChunk { addr, offset })
     }
 
     /// Count the number of available data frames.
@@ -416,9 +423,31 @@ impl super::ControlSet for SpinLockedControlSet {
     }
 }
 
-impl XskUmemFrame {
-    pub fn into_xdp(self, len: u32) -> XdpDesc {
-        XdpDesc { 
+impl XskUmemChunk {
+    /// Turn this whole chunk into a concrete descriptor for the transmit ring.
+    ///
+    /// If you've the address or offset are not as returned by the ring then the result is
+    /// unspecified, but sound. And potentially safe to use, but the kernel may complain.
+    pub fn as_xdp(self) -> XdpDesc {
+        let len = ptr_len(self.addr.as_ptr()) as u32;
+        self.as_xdp_with_len(len)
+    }
+
+    /// Turn into a descriptor with concrete length.
+    ///
+    /// # Panics
+    ///
+    /// When debug assertions are enabled, this panics if the length is longer than the address
+    /// range refers to.
+    pub fn as_xdp_with_len(self, len: u32) -> XdpDesc {
+        debug_assert!(
+            len <= ptr_len(self.addr.as_ptr()) as u32,
+            "Invalid XDP descriptor length {} for chunk of size {}",
+            len,
+            ptr_len(self.addr.as_ptr()) as u32,
+        );
+
+        XdpDesc {
             addr: self.offset,
             len,
             options: 0,

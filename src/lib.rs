@@ -11,6 +11,7 @@
 //!
 //! The entrypoint to the library is an instance of [`xsk::XskUmem`].
 #![no_std]
+#![deny(missing_docs)]
 extern crate alloc;
 
 /// User-space side of one or multiple XDP sockets.

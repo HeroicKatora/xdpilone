@@ -1,3 +1,6 @@
+// Please see the respective Linux documentation instead.
+#![allow(missing_docs)]
+
 /// Rx/Tx descriptor.
 ///
 /// The layout of this struct is part of the kernel interface.
@@ -65,9 +68,13 @@ pub struct XdpRingOffsetsV1 {
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone)]
 pub struct XdpMmapOffsetsV1 {
+    /// Offsets for the receive ring (kernel produced).
     pub rx: XdpRingOffsetsV1,
+    /// Offsets for the transmit ring (user produced).
     pub tx: XdpRingOffsetsV1,
+    /// Offsets for the fill ring (user produced).
     pub fr: XdpRingOffsetsV1,
+    /// Offsets for the completion ring (kernel produced).
     pub cr: XdpRingOffsetsV1,
 }
 

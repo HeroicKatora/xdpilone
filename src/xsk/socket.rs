@@ -7,17 +7,13 @@ impl XskSocket {
     const SO_NETNS_COOKIE: libc::c_int = 71;
     const INIT_NS: u64 = 1;
 
+    /// Create a new socket for a given interface.
     pub fn new(interface: &IfInfo) -> Result<Self, Errno> {
         let fd = Arc::new(SocketFd::new()?);
         Self::with_xdp_socket(interface, fd)
     }
 
     /// Create a socket using the FD of the `umem`.
-    ///
-    /// # Safety
-    ///
-    /// It's *not* (memory-)unsafe to run this twice with different interfaces but it's also
-    /// incorrect. Please don't.
     pub fn with_shared(interface: &IfInfo, umem: &XskUmem) -> Result<Self, Errno> {
         Self::with_xdp_socket(interface, umem.fd.clone())
     }

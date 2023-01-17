@@ -40,6 +40,9 @@ impl XskDeviceQueue {
         self.socket.fd.0
     }
 
+    /// Query if the fill queue needs to be woken to proceed receiving.
+    ///
+    /// This is only accurate if `XskUmem::XDP_BIND_NEED_WAKEUP` was set.
     pub fn needs_wakeup(&self) -> bool {
         self.fcq.prod.check_flags() & XskTxRing::XDP_RING_NEED_WAKEUP != 0
     }
@@ -75,6 +78,12 @@ impl XskRxRing {
         }
     }
 
+    /// Query the number of available descriptors.
+    ///
+    /// This operation is advisory only. It performs a __relaxed__ atomic load of the kernel
+    /// producer. An `acquire` barrier, such as performed by [`XskRxRing::receive`], is always
+    /// needed before reading any of the written descriptors to ensure that these reads do not race
+    /// with the kernel's writes.
     pub fn available(&self) -> u32 {
         self.ring.count_pending()
     }
@@ -110,6 +119,9 @@ impl XskTxRing {
         self.ring.count_pending()
     }
 
+    /// Query if the transmit queue needs to be woken to proceed receiving.
+    ///
+    /// This is only accurate if `XskUmem::XDP_BIND_NEED_WAKEUP` was set.
     pub fn needs_wakeup(&self) -> bool {
         self.ring.check_flags() & Self::XDP_RING_NEED_WAKEUP != 0
     }
@@ -297,6 +309,7 @@ impl ReadComplete<'_> {
         self.idx.buffers
     }
 
+    /// Read the next descriptor, an address of a chunk that was transmitted.
     pub fn read(&mut self) -> Option<u64> {
         let bufidx = self.idx.next()?;
         // Safety: the buffer is from that same queue by construction.
@@ -324,12 +337,23 @@ impl WriteTx<'_> {
         self.idx.buffers
     }
 
+    /// Insert a chunk descriptor to be sent.
+    ///
+    /// Returns `1` if successful and `0` if the ring is full. (Return type is only for consistency
+    /// with [`insert`]). It's guaranteed that the first [`capacity`] inserts with this function
+    /// succeed.
     pub fn insert_once(&mut self, nr: XdpDesc) -> u32 {
         self.insert(core::iter::once(nr))
     }
 
+    /// Fill the transmit ring from an iterator.
+    ///
+    /// Returns the total number of enqueued descriptor. This is a `u32` as it is the common
+    /// integral type for describing cardinalities of descriptors in a ring. Use an inspecting
+    /// iterator for a more intrusive callback.
     pub fn insert(&mut self, it: impl Iterator<Item = XdpDesc>) -> u32 {
         let mut n = 0;
+        // FIXME: incorrect iteration order. Some items may get consumed but not inserted.
         for (item, bufidx) in it.zip(self.idx.by_ref()) {
             n += 1;
             unsafe { *self.queue.tx_desc(bufidx).as_ptr() = item };
@@ -358,9 +382,12 @@ impl ReadRx<'_> {
         self.idx.buffers
     }
 
+    /// Read one descriptor from the receive ring.
     pub fn read(&mut self) -> Option<XdpDesc> {
         let bufidx = self.idx.next()?;
-        // Safety: the buffer is from that same queue by construction.
+        // Safety: the buffer is from that same queue by construction, by assumption this is within
+        // the valid memory region of the mapping.
+        // FIXME: queue could validate that this is aligned.
         Some(unsafe { *self.queue.rx_desc(bufidx).as_ptr() })
     }
 
