@@ -164,9 +164,9 @@ pub struct XskDeviceQueue {
 
 /// An owner of receive/transmit queues.
 ///
-/// This represents a _bound_ and configured version of the raw `XskSocket`.
-///
-/// FIXME: name is somewhat suboptimal?
+/// This represents a configured version of the raw `XskSocket`. It allows you to map the required
+/// rings and _then_ [`XskUmem::bind`] the socket, enabling the operations of the queues with the
+/// interface.
 pub struct XskUser {
     /// A clone of the socket it was created from.
     socket: XskSocket,
@@ -180,7 +180,7 @@ pub struct XskUser {
 ///
 /// This also maintains the mmap of the associated queue.
 // Implemented in <xsk/user.rs>
-pub struct XskRxRing {
+pub struct XksRingRx {
     ring: XskRingCons,
     fd: Arc<SocketFd>,
 }
@@ -189,14 +189,15 @@ pub struct XskRxRing {
 ///
 /// This also maintains the mmap of the associated queue.
 // Implemented in <xsk/user.rs>
-pub struct XskTxRing {
+pub struct XskRingTx {
     ring: XskRingProd,
     fd: Arc<SocketFd>,
 }
 
 /// A complete (cached) information about a socket.
 ///
-/// Please allocate this, the struct is quite large. Put it into an `Arc` since it is not mutable.
+/// Please allocate this, the struct is quite large. For instance, put it into an `Arc` as soon as
+/// it is no longer mutable, or initialize it in-place with [`Arc::get_mut`].
 #[derive(Clone, Copy)]
 pub struct IfInfo {
     ctx: IfCtx,

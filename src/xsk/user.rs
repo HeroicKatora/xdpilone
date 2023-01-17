@@ -1,5 +1,5 @@
 use crate::xdp::XdpDesc;
-use crate::xsk::{BufIdx, XskDeviceQueue, XskRingCons, XskRingProd, XskRxRing, XskTxRing};
+use crate::xsk::{BufIdx, XksRingRx, XskDeviceQueue, XskRingCons, XskRingProd, XskRingTx};
 
 impl XskDeviceQueue {
     /// Add some buffers to the fill ring.
@@ -44,7 +44,7 @@ impl XskDeviceQueue {
     ///
     /// This is only accurate if `XskUmem::XDP_BIND_NEED_WAKEUP` was set.
     pub fn needs_wakeup(&self) -> bool {
-        self.fcq.prod.check_flags() & XskTxRing::XDP_RING_NEED_WAKEUP != 0
+        self.fcq.prod.check_flags() & XskRingTx::XDP_RING_NEED_WAKEUP != 0
     }
 
     /// Poll the fill queue descriptor, to wake it up.
@@ -67,7 +67,7 @@ impl Drop for XskDeviceQueue {
     }
 }
 
-impl XskRxRing {
+impl XksRingRx {
     /// Receive some buffers.
     ///
     /// Returns an iterator over the descriptors.
@@ -81,7 +81,7 @@ impl XskRxRing {
     /// Query the number of available descriptors.
     ///
     /// This operation is advisory only. It performs a __relaxed__ atomic load of the kernel
-    /// producer. An `acquire` barrier, such as performed by [`XskRxRing::receive`], is always
+    /// producer. An `acquire` barrier, such as performed by [`XksRingRx::receive`], is always
     /// needed before reading any of the written descriptors to ensure that these reads do not race
     /// with the kernel's writes.
     pub fn available(&self) -> u32 {
@@ -95,13 +95,13 @@ impl XskRxRing {
     /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
     /// and avoid modifying it (unless you know what you're doing). It should be treated as a
     /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
-    /// `XskRxRing` modifies a reused file descriptor that it assumes to own...
+    /// `XksRingRx` modifies a reused file descriptor that it assumes to own...
     pub fn as_raw_fd(&self) -> libc::c_int {
         self.fd.0
     }
 }
 
-impl XskTxRing {
+impl XskRingTx {
     const XDP_RING_NEED_WAKEUP: u32 = 1 << 0;
 
     /// Transmit some buffers.
@@ -148,7 +148,7 @@ impl XskTxRing {
     /// Use the file descriptor to attach the ring to an XSK map, for instance, but do not close it
     /// and avoid modifying it (unless you know what you're doing). It should be treated as a
     /// `BorrowedFd<'_>`. That said, it's not instant UB but probably delayed UB when the
-    /// `XskTxRing` modifies a reused file descriptor that it assumes to own (for instance, `wake`
+    /// `XskRingTx` modifies a reused file descriptor that it assumes to own (for instance, `wake`
     /// sends a message to it).
     pub fn as_raw_fd(&self) -> libc::c_int {
         self.fd.0
@@ -184,7 +184,7 @@ pub struct ReadComplete<'queue> {
 
 /// A writer to a transmission (TX) queue.
 ///
-/// Created with [`XskTxRing::transmit`].
+/// Created with [`XskRingTx::transmit`].
 pub struct WriteTx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -193,7 +193,7 @@ pub struct WriteTx<'queue> {
 
 /// A reader from an receive (RX) queue.
 ///
-/// Created with [`XskRxRing::receive`].
+/// Created with [`XksRingRx::receive`].
 pub struct ReadRx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.

@@ -5,9 +5,9 @@ use alloc::sync::Arc;
 
 use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpUmemReg};
 use crate::xsk::{
-    ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XskDeviceControl, XskDeviceQueue,
-    XskDeviceRings, XskRingCons, XskRingProd, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
-    XskUmem, XskUmemChunk, XskUmemConfig, XskUser,
+    ptr_len, BufIdx, IfCtx, SocketFd, SocketMmapOffsets, XksRingRx, XskDeviceControl,
+    XskDeviceQueue, XskDeviceRings, XskRingCons, XskRingProd, XskRingTx, XskSocket,
+    XskSocketConfig, XskUmem, XskUmemChunk, XskUmemConfig, XskUser,
 };
 use crate::Errno;
 
@@ -356,10 +356,10 @@ impl XskUser {
     ///
     /// FIXME: we allow mapping the ring more than once. Not a memory safety problem afaik, but a
     /// correctness problem.
-    pub fn map_rx(&self) -> Result<XskRxRing, Errno> {
+    pub fn map_rx(&self) -> Result<XksRingRx, Errno> {
         let rx_size = self.config.rx_size.ok_or(Errno(-libc::EINVAL))?.get();
         let ring = unsafe { XskRingCons::rx(&self.socket.fd, &self.map, rx_size) }?;
-        Ok(XskRxRing {
+        Ok(XksRingRx {
             fd: self.socket.fd.clone(),
             ring,
         })
@@ -371,10 +371,10 @@ impl XskUser {
     ///
     /// FIXME: we allow mapping the ring more than once. Not a memory safety problem afaik, but a
     /// correctness problem.
-    pub fn map_tx(&self) -> Result<XskTxRing, Errno> {
+    pub fn map_tx(&self) -> Result<XskRingTx, Errno> {
         let tx_size = self.config.tx_size.ok_or(Errno(-libc::EINVAL))?.get();
         let ring = unsafe { XskRingProd::tx(&self.socket.fd, &self.map, tx_size) }?;
-        Ok(XskTxRing {
+        Ok(XskRingTx {
             fd: self.socket.fd.clone(),
             ring,
         })
@@ -393,7 +393,7 @@ impl XskSocketConfig {
     pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
     /// Enable support for need wakeup.
     ///
-    /// Needs to be set for [`XskDeviceQueue::needs_wakeup`] and [`XskTxRing::needs_wakeup`].
+    /// Needs to be set for [`XskDeviceQueue::needs_wakeup`] and [`XskRingTx::needs_wakeup`].
     pub const XDP_BIND_NEED_WAKEUP: u16 = 1 << 3;
 }
 

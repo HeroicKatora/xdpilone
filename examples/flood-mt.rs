@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::{num::NonZeroU32, ptr::NonNull};
 use xdpilone::xdp::XdpDesc;
 use xdpilone::xsk::{
-    BufIdx, IfInfo, XskSocket, XskSocketConfig, XskTxRing, XskUmem, XskUmemConfig,
+    BufIdx, IfInfo, XskSocket, XskSocketConfig, XskRingTx, XskUmem, XskUmemConfig,
 };
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
@@ -130,7 +130,7 @@ fn main() {
         cq_log_batch[32 - comp_now.leading_zeros() as usize] += 1;
     };
 
-    let sender = |mut tx: XskTxRing| {
+    let sender = |mut tx: XskRingTx| {
         let mut stall_threshold = WAKE_THRESHOLD;
         loop {
             if sent.load(Ordering::Relaxed) >= total && completed.load(Ordering::Relaxed) >= total {
