@@ -2,15 +2,23 @@ use crate::xdp::XdpDesc;
 use crate::xsk::{BufIdx, DeviceQueue, RingCons, RingProd, RingRx, RingTx};
 
 impl DeviceQueue {
-    /// Add some buffers to the fill ring.
-    pub fn fill(&mut self, n: u32) -> WriteFill<'_> {
+    /// Prepare some buffers for the fill ring.
+    ///
+    /// The argument is an upper bound of buffers. Use the resulting object to pass specific
+    /// buffers to the fill queue and commit the write.
+    pub fn fill(&mut self, max: u32) -> WriteFill<'_> {
         WriteFill {
-            idx: BufIdxIter::reserve(&mut self.fcq.prod, n),
+            idx: BufIdxIter::reserve(&mut self.fcq.prod, max),
             queue: &mut self.fcq.prod,
         }
     }
 
     /// Reap some buffers from the completion ring.
+    ///
+    /// Return an iterator over completed buffers.
+    ///
+    /// The argument is an upper bound of buffers. Use the resulting object to dequeue specific
+    /// buffers from the completion queue and commit the read.
     pub fn complete(&mut self, n: u32) -> ReadComplete<'_> {
         ReadComplete {
             idx: BufIdxIter::peek(&mut self.fcq.cons, n),
@@ -167,6 +175,10 @@ struct BufIdxIter {
 /// A writer to a fill queue.
 ///
 /// Created with [`DeviceQueue::fill`].
+///
+/// The owner of this value should call some of the insertion methods in any order, then release
+/// the writes by [`WriteFill::commit`] which performs an atomic release in the Umem queue.
+#[must_use = "Does nothing unless the writes are committed"]
 pub struct WriteFill<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -176,6 +188,11 @@ pub struct WriteFill<'queue> {
 /// A reader from a completion queue.
 ///
 /// Created with [`DeviceQueue::complete`].
+///
+/// The owner of this value should call some of the reader methods or iteration in any order, then
+/// mark the reads by [`ReadComplete::release`], which performs an atomic release in the Umem
+/// queue.
+#[must_use = "Does nothing unless the reads are committed"]
 pub struct ReadComplete<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -185,6 +202,10 @@ pub struct ReadComplete<'queue> {
 /// A writer to a transmission (TX) queue.
 ///
 /// Created with [`RingTx::transmit`].
+///
+/// The owner of this value should call some of the insertion methods in any order, then release
+/// the writes by [`WriteTx::commit`] which performs an atomic release in the Umem queue.
+#[must_use = "Does nothing unless the writes are committed"]
 pub struct WriteTx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -194,6 +215,10 @@ pub struct WriteTx<'queue> {
 /// A reader from an receive (RX) queue.
 ///
 /// Created with [`RingRx::receive`].
+///
+/// The owner of this value should call some of the reader methods or iteration in any order, then
+/// mark the reads by [`ReadRx::release`], which performs an atomic release in the Umem queue.
+#[must_use = "Does nothing unless the reads are committed"]
 pub struct ReadRx<'queue> {
     idx: BufIdxIter,
     /// The queue we read from.
@@ -334,6 +359,14 @@ impl Drop for ReadComplete<'_> {
     }
 }
 
+impl Iterator for ReadComplete<'_> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        self.read()
+    }
+}
+
 impl WriteTx<'_> {
     /// The total number of available slots.
     pub fn capacity(&self) -> u32 {
@@ -355,7 +388,7 @@ impl WriteTx<'_> {
     /// iterator for a more intrusive callback.
     pub fn insert(&mut self, it: impl Iterator<Item = XdpDesc>) -> u32 {
         let mut n = 0;
-        // FIXME: incorrect iteration order. Some items may get consumed but not inserted.
+        // FIXME: incorrect iteration order? Some items may get consumed but not inserted.
         for (item, bufidx) in it.zip(self.idx.by_ref()) {
             n += 1;
             unsafe { *self.queue.tx_desc(bufidx).as_ptr() = item };
@@ -405,5 +438,13 @@ impl Drop for ReadRx<'_> {
         if self.idx.buffers != 0 {
             self.queue.cancel(self.idx.buffers)
         }
+    }
+}
+
+impl Iterator for ReadRx<'_> {
+    type Item = XdpDesc;
+
+    fn next(&mut self) -> Option<XdpDesc> {
+        self.read()
     }
 }
