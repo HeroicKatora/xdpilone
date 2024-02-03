@@ -341,7 +341,7 @@ impl DeviceQueue {
     #[doc(hidden)]
     #[deprecated = "Not implemented to reduce scope and weight, use another library to bind a BPF to the socket."]
     pub fn setup_xdp_prog(&mut self) -> Result<(), libc::c_int> {
-        todo!()
+        panic!("Not implemented to reduce scope and weight, use another library to bind a BPF to the socket.");
     }
 }
 
