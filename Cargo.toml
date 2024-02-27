@@ -8,6 +8,7 @@ license = "EUPL-1.2"
 authors = ["Andreas Molzer"]
 categories = ["network-programming", "os::linux-apis", "no-std"]
 repository = "https://github.com/HeroicKatora/xdpilone"
+readme = "Readme.md"
 
 # Packet configuration
 edition = "2021"
