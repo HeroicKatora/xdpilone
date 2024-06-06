@@ -1,3 +1,10 @@
+## v1.0.4
+
+- No code changes.
+- Clarified status as feature-complete, passively maintained.
+- Updated some documentation.
+
+
 ## v1.0.3
 
 - Hide an unimplemented function sketch which was accidentally left over from

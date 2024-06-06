@@ -1,16 +1,17 @@
 [package]
 # Distribution information.
 name = "xdpilone"
-version = "1.0.3"
-description = "Interaction with Linux XDP sockets and rings. No libbpf/libxpd-sys. Lightweight, high-performance."
+version = "1.0.4"
 
+# User facing information.
+description = "Interaction with Linux XDP sockets and rings. No libbpf/libxpd-sys. Lightweight, high-performance."
 license = "EUPL-1.2"
 authors = ["Andreas Molzer"]
 categories = ["network-programming", "os::linux-apis", "no-std"]
 repository = "https://github.com/HeroicKatora/xdpilone"
 readme = "Readme.md"
 
-# Packet configuration
+# Cargo&resolver configuration
 edition = "2021"
 rust-version = "1.65.0"
 
@@ -26,3 +27,6 @@ default-features = false
 [dev-dependencies.clap]
 version = "4"
 features = ["derive"]
+
+[badges]
+maintenance = { status = "passively-maintained" }
