@@ -16,6 +16,9 @@ pub struct XdpDesc {
 }
 
 /// Argument to `setsockopt(_, SOL_XDP, XDP_UMEM_REG)`.
+///
+/// Note that this struct's size determines the kernel interpretation of the option. In particular,
+/// padding passes garbage to the kernel while indicating said garbage as values!
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone)]
 pub struct XdpUmemReg {
@@ -24,7 +27,21 @@ pub struct XdpUmemReg {
     pub chunk_size: u32,
     pub headroom: u32,
     pub flags: u32,
+    pub tx_metadata_len: u32,
 }
+
+const _NO_PADDING: () = {
+    assert!(
+        core::mem::size_of::<XdpUmemReg>()
+        // For each field. Keep in sync.
+            == (core::mem::size_of::<u64>()
+                + core::mem::size_of::<u64>()
+                + core::mem::size_of::<u32>()
+                + core::mem::size_of::<u32>()
+                + core::mem::size_of::<u32>()
+                + core::mem::size_of::<u32>())
+    );
+};
 
 /// The mmap-offsets to use for mapping one ring of an XDP socket.
 #[repr(C)]
