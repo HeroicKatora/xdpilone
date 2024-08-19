@@ -1,7 +1,7 @@
 [package]
 # Distribution information.
 name = "xdpilone"
-version = "1.0.4"
+version = "1.0.5"
 
 # User facing information.
 description = "Interaction with Linux XDP sockets and rings. No libbpf/libxpd-sys. Lightweight, high-performance."

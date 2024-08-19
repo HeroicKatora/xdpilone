@@ -1,3 +1,9 @@
+## v1.0.5
+
+- Discovered that the `XdpUmemReg` contains padding, being passed to the kernel
+  as the `tx_metadata_len` option. This would should up as spurious invalid
+  argument (EINVAL) errors from the interpretation of the field.
+
 ## v1.0.4
 
 - No code changes.
