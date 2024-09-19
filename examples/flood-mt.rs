@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::{num::NonZeroU32, ptr::NonNull};
 
 use xdpilone::xdp::XdpDesc;
-use xdpilone::{BufIdx, IfInfo, RingTx, Socket, SocketConfig, Umem, UmemConfig};
+use xdpilone::{BufIdx, DeviceQueue, IfInfo, RingTx, Socket, SocketConfig, Umem, UmemConfig};
 
 // We can use _any_ data mapping, so let's use a static one setup by the linker/loader.
 #[repr(align(4096))]
@@ -28,9 +28,6 @@ fn main() {
 
     // Let's use that same file descriptor for our packet buffer operations on the specified
     // network interface. Umem + Fill/Complete + Rx/Tx will live on the same FD.
-    let sock = Socket::with_shared(&info, &umem).unwrap();
-    // Get the fill/completion device (which handles the 'device queue').
-    let device = umem.fq_cq(&sock).unwrap();
 
     let rxtx_config = SocketConfig {
         rx_size: None,
@@ -38,20 +35,53 @@ fn main() {
         bind_flags: 0,
     };
 
-    let mut tx_queues = vec![];
+    let num_threads = args.threads.map_or(1, NonZeroU32::get);
 
-    let mut sock = Some(Socket::with_shared(&info, &umem).unwrap());
-    for _ in 0..(args.threads.map_or(1, NonZeroU32::get)) {
-        let sock = sock.take().unwrap_or_else(|| Socket::new(&info).unwrap());
+    let mut tx_queues = vec![];
+    let mut to_binds = vec![];
+    let mut devices = vec![];
+    let mut socks = vec![];
+
+    for (idx, (dev_idx, info)) in core::iter::repeat(info.iter().enumerate())
+        .flatten()
+        .take(num_threads as usize)
+        .enumerate()
+    {
+        let sock = if idx == 0 {
+            Socket::with_shared(&info, &umem).unwrap()
+        } else {
+            Socket::new(&info).unwrap()
+        };
+
+        if idx == dev_idx {
+            devices.push(umem.fq_cq(&sock).unwrap());
+        }
 
         // Configure our receive/transmit queues.
         let rxtx = umem.rx_tx(&sock, &rxtx_config).unwrap();
-        assert!(rxtx.map_rx().is_err(), "did not provide a rx_size");
+        socks.push(sock);
+        to_binds.push(rxtx);
+    }
+
+    for (idx, ((dev_idx, queue), rxtx)) in core::iter::repeat(devices.iter().enumerate())
+        .flatten()
+        .zip(to_binds.iter())
+        .enumerate()
+    {
+        if idx == dev_idx {
+            eprintln!("Binding socket {idx} {}", rxtx.as_raw_fd());
+            // Ready to bind, i.e. kernel to start doing things on the ring.
+            umem.bind(&rxtx).unwrap();
+        } else {
+            umem.bind_to_fq_cq(queue, &rxtx).unwrap();
+        }
+    }
+
+    for (idx, rxtx) in to_binds.iter().enumerate() {
+        eprintln!("Mapping socket {idx}");
         // Map the TX queue into our memory space.
         let tx = rxtx.map_tx().unwrap();
-
-        // Ready to bind, i.e. kernel to start doing things on the ring.
-        umem.bind(&rxtx).unwrap();
+        assert!(rxtx.map_rx().is_err(), "did not provide a rx_size");
         tx_queues.push(tx);
     }
 
@@ -66,8 +96,6 @@ fn main() {
     eprintln!("Connection up!");
 
     // Bring our bindings into an 'active duty' state.
-    let mut device = device;
-
     let start = std::time::Instant::now();
 
     let batch: u32 = args.batch.unwrap_or(1 << 10);
@@ -79,11 +107,11 @@ fn main() {
     let completed = AtomicU32::new(0);
     let stall_count = AtomicU32::new(0);
 
-    let mut stat_loops = 0;
-    let mut stat_stall = 0;
+    let stat_loops = AtomicU32::new(0);
+    let stat_stall = AtomicU32::new(0);
     let stat_woken = AtomicU32::new(0);
     let tx_log_batch = [0; 33].map(AtomicU32::new);
-    let mut cq_log_batch = [0; 33];
+    let cq_log_batch = [0; 33].map(AtomicU32::new);
 
     eprintln!(
         "Dumping {} B with {} packets!",
@@ -91,7 +119,7 @@ fn main() {
         total
     );
 
-    let completer = || loop {
+    let completer = |mut queue: DeviceQueue| loop {
         let current = completed.load(Ordering::Relaxed);
 
         if current == total {
@@ -107,7 +135,7 @@ fn main() {
 
         {
             // Try to dequeue some completions.
-            let mut reader = device.complete(comp_batch);
+            let mut reader = queue.complete(comp_batch);
             let mut comp_temp = 0;
 
             while reader.read().is_some() {
@@ -120,13 +148,13 @@ fn main() {
 
         if comp_now == 0 {
             stall_count.fetch_add(1, Ordering::Relaxed);
-            stat_stall += 1;
+            stat_stall.fetch_add(1, Ordering::Relaxed);
         }
 
         completed.fetch_add(comp_now, Ordering::Release);
-        stat_loops += 1;
+        stat_loops.fetch_add(1, Ordering::Relaxed);
 
-        cq_log_batch[32 - comp_now.leading_zeros() as usize] += 1;
+        cq_log_batch[32 - comp_now.leading_zeros() as usize].fetch_add(1, Ordering::Relaxed);
     };
 
     let sender = |mut tx: RingTx| {
@@ -176,7 +204,9 @@ fn main() {
     };
 
     std::thread::scope(|scope| {
-        scope.spawn(completer);
+        for queue in devices {
+            scope.spawn(|| completer(queue));
+        }
 
         for tx in tx_queues {
             scope.spawn(|| sender(tx));
@@ -202,8 +232,8 @@ fn main() {
 
     eprintln!(
         "Statistics\nLoops: {}; stalled: {}; wake/sys-call: {}",
-        stat_loops,
-        stat_stall,
+        stat_loops.into_inner(),
+        stat_stall.into_inner(),
         stat_woken.into_inner()
     );
 
@@ -225,7 +255,7 @@ fn prepare_buffer(offset: u64, buffer: &mut [u8], args: &Args) -> XdpDesc {
 #[derive(clap::Parser)]
 struct Args {
     /// The name of the interface to use.
-    ifname: String,
+    ifname: Vec<String>,
     /// Overwrite the queue_id.
     #[arg(long = "queue-id")]
     queue_id: Option<u32>,
@@ -242,19 +272,30 @@ struct Args {
     threads: Option<NonZeroU32>,
 }
 
-fn ifinfo(args: &Args) -> Result<IfInfo, xdpilone::Errno> {
-    let mut bytes = String::from(&args.ifname);
-    bytes.push('\0');
-    let bytes = bytes.as_bytes();
-    let name = core::ffi::CStr::from_bytes_with_nul(bytes).unwrap();
+fn ifinfo(args: &Args) -> Result<Vec<IfInfo>, xdpilone::Errno> {
+    let mut infos = vec![];
 
-    let mut info = IfInfo::invalid();
-    info.from_name(name)?;
-    if let Some(q) = args.queue_id {
-        info.set_queue(q);
+    if args.ifname.is_empty() {
+        eprintln!("At least one IFNAME required");
+        std::process::exit(1);
     }
 
-    Ok(info)
+    for ifname in &args.ifname {
+        let mut bytes = ifname.to_owned();
+        bytes.push('\0');
+        let bytes = bytes.as_bytes();
+        let name = core::ffi::CStr::from_bytes_with_nul(bytes).unwrap();
+
+        let mut info = IfInfo::invalid();
+        info.from_name(name)?;
+        if let Some(q) = args.queue_id {
+            info.set_queue(q);
+        }
+
+        infos.push(info);
+    }
+
+    Ok(infos)
 }
 
 #[rustfmt::skip]

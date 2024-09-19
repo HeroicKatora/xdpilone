@@ -94,6 +94,7 @@ impl Umem {
         };
 
         Self::configure(&umem)?;
+
         Ok(umem)
     }
 
@@ -170,6 +171,7 @@ impl Umem {
     /// portions of each queue is active at a time. The kernel won't care about your broken code.
     pub fn fq_cq(&self, interface: &Socket) -> Result<DeviceQueue, Errno> {
         if !self.devices.insert(interface.info.ctx) {
+            // We know this will just yield `-EBUSY` anyways.
             return Err(Errno(libc::EINVAL));
         }
 
@@ -231,10 +233,24 @@ impl Umem {
 
     /// Activate rx/tx queues by binding the socket to a device.
     ///
+    /// This works for the socket for which fill and completion queues are created, or if this file
+    /// descriptor is shared with a device queue. Otherwise [`Self::bind_to_fq_cq`].
+    ///
     /// Please note that calls to [`User::map_rx`] and [`User::map_tx`] will fail once the
     /// device is bound! Also, the fill and completion queues of the interface/queue must be setup
     /// already.
     pub fn bind(&self, interface: &User) -> Result<(), Errno> {
+        Self::bind_at(interface, &self.fd)
+    }
+
+    /// Active rx/tx queues by socket to a device queue, that is separate from the umem socket.
+    ///
+    /// This
+    pub fn bind_to_fq_cq(&self, fc: &DeviceQueue, interface: &User) -> Result<(), Errno> {
+        Self::bind_at(interface, &fc.socket.fd)
+    }
+
+    fn bind_at(interface: &User, sock: &SocketFd) -> Result<(), Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,
             queue_id: interface.socket.info.ctx.queue_id,
@@ -244,9 +260,9 @@ impl Umem {
         // Note: using a separate socket with shared umem requires one dedicated configured cq for
         // the interface indicated.
 
-        if interface.socket.fd.0 != self.fd.0 {
+        if interface.socket.fd.0 != sock.0 {
             sxdp.flags = interface.config.bind_flags | SocketConfig::XDP_BIND_SHARED_UMEM;
-            sxdp.shared_umem_fd = self.fd.0 as u32;
+            sxdp.shared_umem_fd = sock.0 as u32;
         }
 
         if unsafe {

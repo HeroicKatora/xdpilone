@@ -287,6 +287,22 @@ impl Drop for SocketFd {
 
 // FIXME: pending stabilization, use pointer::len directly.
 // <https://doc.rust-lang.org/stable/std/primitive.pointer.html#method.len>
+//
+// FIXME: In 1.79 this was stabilized. Bump MSRV fine?
 fn ptr_len(ptr: *mut [u8]) -> usize {
     unsafe { (*(ptr as *mut [()])).len() }
+}
+
+impl Socket {
+    /// Get the raw file descriptor number underlying this socket.
+    pub fn as_raw_fd(&self) -> i32 {
+        self.fd.0
+    }
+}
+
+impl User {
+    /// Get the raw file descriptor number underlying this socket.
+    pub fn as_raw_fd(&self) -> i32 {
+        self.socket.as_raw_fd()
+    }
 }
