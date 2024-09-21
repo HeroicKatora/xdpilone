@@ -231,7 +231,7 @@ impl Umem {
         })
     }
 
-    /// Activate rx/tx queues by binding the socket to a device.
+    /// Activate a socket with rx/tx queues by binding it to a device.
     ///
     /// This works for the socket for which fill and completion queues are created, or if this file
     /// descriptor is shared with a device queue. Otherwise [`DeviceQueue::bind`].
@@ -243,7 +243,7 @@ impl Umem {
         Self::bind_at(interface, &self.fd)
     }
 
-    fn bind_at(interface: &User, sock: &SocketFd) -> Result<(), Errno> {
+    fn bind_at(interface: &User, umem_sock: &SocketFd) -> Result<(), Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,
             queue_id: interface.socket.info.ctx.queue_id,
@@ -253,9 +253,9 @@ impl Umem {
         // Note: using a separate socket with shared umem requires one dedicated configured cq for
         // the interface indicated.
 
-        if interface.socket.fd.0 != sock.0 {
+        if interface.socket.fd.0 != umem_sock.0 {
             sxdp.flags = interface.config.bind_flags | SocketConfig::XDP_BIND_SHARED_UMEM;
-            sxdp.shared_umem_fd = sock.0 as u32;
+            sxdp.shared_umem_fd = umem_sock.0 as u32;
         }
 
         if unsafe {
