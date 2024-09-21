@@ -73,7 +73,7 @@ fn main() {
             // Ready to bind, i.e. kernel to start doing things on the ring.
             umem.bind(&rxtx).unwrap();
         } else {
-            umem.bind_to_fq_cq(queue, &rxtx).unwrap();
+            queue.bind(&rxtx).unwrap();
         }
     }
 

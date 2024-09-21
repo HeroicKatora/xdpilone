@@ -234,20 +234,13 @@ impl Umem {
     /// Activate rx/tx queues by binding the socket to a device.
     ///
     /// This works for the socket for which fill and completion queues are created, or if this file
-    /// descriptor is shared with a device queue. Otherwise [`Self::bind_to_fq_cq`].
+    /// descriptor is shared with a device queue. Otherwise [`DeviceQueue::bind`].
     ///
     /// Please note that calls to [`User::map_rx`] and [`User::map_tx`] will fail once the
     /// device is bound! Also, the fill and completion queues of the interface/queue must be setup
     /// already.
     pub fn bind(&self, interface: &User) -> Result<(), Errno> {
         Self::bind_at(interface, &self.fd)
-    }
-
-    /// Active rx/tx queues by socket to a device queue, that is separate from the umem socket.
-    ///
-    /// This
-    pub fn bind_to_fq_cq(&self, fc: &DeviceQueue, interface: &User) -> Result<(), Errno> {
-        Self::bind_at(interface, &fc.socket.fd)
     }
 
     fn bind_at(interface: &User, sock: &SocketFd) -> Result<(), Errno> {
@@ -358,6 +351,11 @@ impl DeviceQueue {
     #[deprecated = "Not implemented to reduce scope and weight, use another library to bind a BPF to the socket."]
     pub fn setup_xdp_prog(&mut self) -> Result<(), libc::c_int> {
         panic!("Not implemented to reduce scope and weight, use another library to bind a BPF to the socket.");
+    }
+
+    /// Bind the socket to a device queue, activate rx/tx queues.
+    pub fn bind(&self, interface: &User) -> Result<(), Errno> {
+        Umem::bind_at(interface, &self.socket.fd)
     }
 }
 
