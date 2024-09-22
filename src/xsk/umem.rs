@@ -163,12 +163,14 @@ impl Umem {
         Ok(())
     }
 
-    /// Map the fill and completion queue of this ring for a device.
+    /// Configure the fill and completion queue for a interface queue.
     ///
-    /// The caller _should_ only call this once for each ring. However, it's not entirely incorrect
-    /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
-    /// code is written under the assumption that only one controller/writer for the user-space
-    /// portions of each queue is active at a time. The kernel won't care about your broken code.
+    /// The caller _should_ only call this once for each interface info. However, it's not entirely
+    /// incorrect to do it multiple times. Just, be careful that the administration becomes extra
+    /// messy. All code is written under the assumption that only one controller/writer for the
+    /// user-space portions of each queue is active at a time. The kernel won't care about your
+    /// broken code and race conditions writing to the same queue concurrently. It's an SPSC.
+    /// Probably only the first call for each interface succeeds.
     pub fn fq_cq(&self, interface: &Socket) -> Result<DeviceQueue, Errno> {
         if !self.devices.insert(interface.info.ctx) {
             // We know this will just yield `-EBUSY` anyways.
@@ -231,14 +233,35 @@ impl Umem {
         })
     }
 
-    /// Activate a socket with rx/tx queues by binding it to a device.
+    /// Activate a socket with by binding it to a device.
     ///
-    /// This works for the socket for which fill and completion queues are created, or if this file
-    /// descriptor is shared with a device queue. Otherwise [`DeviceQueue::bind`].
+    /// This associates the umem region to these queues. This is intended for:
     ///
-    /// Please note that calls to [`User::map_rx`] and [`User::map_tx`] will fail once the
-    /// device is bound! Also, the fill and completion queues of the interface/queue must be setup
-    /// already.
+    /// - sockets that maintain the fill and completion ring for a device queue, i.e. a `fc_cq` was
+    ///   called with the socket and that network interface queue is currently being bound.
+    ///
+    /// - queues that the umem socket file descriptor is maintaining as a device queue, i.e. the
+    ///   call to `fc_cq` used a socket created with [`Socket::with_shared`] that utilized the
+    ///   [`Umem`] instance.
+    ///
+    /// Otherwise, when a pure rx/tx socket should be setup use [`DeviceQueue::bind`] with the
+    /// previously bound socket providing its fill/completion queues.
+    ///
+    /// The tree of parents should look as follows:
+    ///
+    /// ```text
+    /// fd0: umem [+fq/cq for ifq0] [+rx/+tx]
+    /// |- [fd1: socket +rx/tx on ifq0 if fd0 has fq/cq] Umem::bind(fd0, fd1)
+    /// |- [fd2: socket +rx/tx on ifq0 if fd0 has fq/cq …] Umem::bind(fd0, fd2)
+    /// |
+    /// |- fd3: socket +fq/cq for ifq1 [+rx/tx] Umem::bind(fd0, fd3)
+    /// | |- fd4: socket +rx/tx on ifq1 DeviceQueue::bind(fd3, fd4)
+    /// | |- fd5: socket +rx/tx on ifq1 … DeviceQueue::bind(fd3, fd5)
+    /// |
+    /// |-fd6:  socket +fq/cq for ifq2 [+rx/tx] Umem::bind(fd0, fd6)
+    /// | |- fd7: socket +rx/tx on ifq1 DeviceQueue::bind(fd6, fd7)
+    /// | |- …
+    /// ```
     pub fn bind(&self, interface: &User) -> Result<(), Errno> {
         Self::bind_at(interface, &self.fd)
     }
