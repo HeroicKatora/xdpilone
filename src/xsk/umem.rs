@@ -94,6 +94,7 @@ impl Umem {
         };
 
         Self::configure(&umem)?;
+
         Ok(umem)
     }
 
@@ -162,14 +163,17 @@ impl Umem {
         Ok(())
     }
 
-    /// Map the fill and completion queue of this ring for a device.
+    /// Configure the fill and completion queue for a interface queue.
     ///
-    /// The caller _should_ only call this once for each ring. However, it's not entirely incorrect
-    /// to do it multiple times. Just, be careful that the administration becomes extra messy. All
-    /// code is written under the assumption that only one controller/writer for the user-space
-    /// portions of each queue is active at a time. The kernel won't care about your broken code.
+    /// The caller _should_ only call this once for each interface info. However, it's not entirely
+    /// incorrect to do it multiple times. Just, be careful that the administration becomes extra
+    /// messy. All code is written under the assumption that only one controller/writer for the
+    /// user-space portions of each queue is active at a time. The kernel won't care about your
+    /// broken code and race conditions writing to the same queue concurrently. It's an SPSC.
+    /// Probably only the first call for each interface succeeds.
     pub fn fq_cq(&self, interface: &Socket) -> Result<DeviceQueue, Errno> {
         if !self.devices.insert(interface.info.ctx) {
+            // We know this will just yield `-EBUSY` anyways.
             return Err(Errno(libc::EINVAL));
         }
 
@@ -229,12 +233,40 @@ impl Umem {
         })
     }
 
-    /// Activate rx/tx queues by binding the socket to a device.
+    /// Activate a socket with by binding it to a device.
     ///
-    /// Please note that calls to [`User::map_rx`] and [`User::map_tx`] will fail once the
-    /// device is bound! Also, the fill and completion queues of the interface/queue must be setup
-    /// already.
+    /// This associates the umem region to these queues. This is intended for:
+    ///
+    /// - sockets that maintain the fill and completion ring for a device queue, i.e. a `fc_cq` was
+    ///   called with the socket and that network interface queue is currently being bound.
+    ///
+    /// - queues that the umem socket file descriptor is maintaining as a device queue, i.e. the
+    ///   call to `fc_cq` used a socket created with [`Socket::with_shared`] that utilized the
+    ///   [`Umem`] instance.
+    ///
+    /// Otherwise, when a pure rx/tx socket should be setup use [`DeviceQueue::bind`] with the
+    /// previously bound socket providing its fill/completion queues.
+    ///
+    /// The tree of parents should look as follows:
+    ///
+    /// ```text
+    /// fd0: umem [+fq/cq for ifq0] [+rx/+tx]
+    /// |- [fd1: socket +rx/tx on ifq0 if fd0 has fq/cq] Umem::bind(fd0, fd1)
+    /// |- [fd2: socket +rx/tx on ifq0 if fd0 has fq/cq …] Umem::bind(fd0, fd2)
+    /// |
+    /// |- fd3: socket +fq/cq for ifq1 [+rx/tx] Umem::bind(fd0, fd3)
+    /// | |- fd4: socket +rx/tx on ifq1 DeviceQueue::bind(fd3, fd4)
+    /// | |- fd5: socket +rx/tx on ifq1 … DeviceQueue::bind(fd3, fd5)
+    /// |
+    /// |-fd6:  socket +fq/cq for ifq2 [+rx/tx] Umem::bind(fd0, fd6)
+    /// | |- fd7: socket +rx/tx on ifq1 DeviceQueue::bind(fd6, fd7)
+    /// | |- …
+    /// ```
     pub fn bind(&self, interface: &User) -> Result<(), Errno> {
+        Self::bind_at(interface, &self.fd)
+    }
+
+    fn bind_at(interface: &User, umem_sock: &SocketFd) -> Result<(), Errno> {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,
             queue_id: interface.socket.info.ctx.queue_id,
@@ -244,9 +276,9 @@ impl Umem {
         // Note: using a separate socket with shared umem requires one dedicated configured cq for
         // the interface indicated.
 
-        if interface.socket.fd.0 != self.fd.0 {
+        if interface.socket.fd.0 != umem_sock.0 {
             sxdp.flags = interface.config.bind_flags | SocketConfig::XDP_BIND_SHARED_UMEM;
-            sxdp.shared_umem_fd = self.fd.0 as u32;
+            sxdp.shared_umem_fd = umem_sock.0 as u32;
         }
 
         if unsafe {
@@ -342,6 +374,11 @@ impl DeviceQueue {
     #[deprecated = "Not implemented to reduce scope and weight, use another library to bind a BPF to the socket."]
     pub fn setup_xdp_prog(&mut self) -> Result<(), libc::c_int> {
         panic!("Not implemented to reduce scope and weight, use another library to bind a BPF to the socket.");
+    }
+
+    /// Bind the socket to a device queue, activate rx/tx queues.
+    pub fn bind(&self, interface: &User) -> Result<(), Errno> {
+        Umem::bind_at(interface, &self.socket.fd)
     }
 }
 
