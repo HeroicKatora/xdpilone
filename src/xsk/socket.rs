@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 
 use crate::xsk::{IfInfo, Socket, SocketFd, Umem};
-use crate::Errno;
+use crate::{Errno, LastErrno};
 
 impl Socket {
     const SO_NETNS_COOKIE: libc::c_int = 71;
@@ -19,7 +19,7 @@ impl Socket {
     }
 
     fn with_xdp_socket(interface: &IfInfo, fd: Arc<SocketFd>) -> Result<Self, Errno> {
-        let mut info = Arc::new(interface.clone());
+        let mut info = Arc::new(*interface);
 
         let mut netnscookie: u64 = 0;
         let mut optlen: libc::socklen_t = core::mem::size_of_val(&netnscookie) as libc::socklen_t;
@@ -36,7 +36,7 @@ impl Socket {
         match err {
             0 => {}
             libc::ENOPROTOOPT => netnscookie = Self::INIT_NS,
-            _ => return Err(Errno::new()),
+            _ => return Err(LastErrno)?,
         }
 
         // Won't reallocate in practice.
@@ -50,7 +50,7 @@ impl SocketFd {
     pub(crate) fn new() -> Result<Self, Errno> {
         let fd = unsafe { libc::socket(libc::AF_XDP, libc::SOCK_RAW, 0) };
         if fd < 0 {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
         Ok(SocketFd(fd))
     }

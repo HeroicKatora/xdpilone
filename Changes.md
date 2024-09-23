@@ -12,6 +12,9 @@
   bind flags are associated with the socket as a `User` struct not as an
   independent argument to the `bind` call.
 - Note: Please open PRs resolving this either way, not issues.
+- Rename `Errno::new` to `Errno::last_os_error` aligning it with the standard
+  library for this construct. The old name is kept as a documentation hidden
+  method for compatibility.
 
 ## v1.0.5
 

@@ -2,7 +2,7 @@ use core::ffi::CStr;
 
 use super::{IfCtx, IfInfo, SocketFd, SocketMmapOffsets};
 use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics};
-use crate::Errno;
+use crate::{Errno, LastErrno};
 
 impl IfInfo {
     /// Create an info referring to no device.
@@ -35,7 +35,7 @@ impl IfInfo {
         let index = unsafe { libc::if_nametoindex(st.as_ptr()) };
 
         if index == 0 {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         self.ctx.ifindex = index;
@@ -53,7 +53,7 @@ impl IfInfo {
         let err = unsafe { libc::if_indextoname(index, self.ifname.as_mut_ptr()) };
 
         if err.is_null() {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         Ok(())
@@ -129,7 +129,7 @@ impl SocketMmapOffsets {
         };
 
         if err != 0 {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         match optlen {
@@ -174,7 +174,7 @@ impl XdpStatistics {
         };
 
         if err != 0 {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         Ok(())

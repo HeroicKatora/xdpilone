@@ -28,17 +28,28 @@ pub mod xdp;
 pub(crate) struct LastErrno;
 
 /// An error that has been read from `errno`.
+//
+// `Default` is a bit misleading even though there is a constructor without any parameters. In
+// hindsight it may have been better to provide a descriptive name.
+#[allow(clippy::new_without_default)]
 pub struct Errno(libc::c_int);
 
 impl From<LastErrno> for Errno {
     fn from(LastErrno: LastErrno) -> Self {
-        Errno::new()
+        Errno::last_os_error()
     }
 }
 
 impl Errno {
     /// Create an error from the latest `errno`.
+    #[deprecated = "use the more descriptive name `Errno::last_os_error`"]
+    #[doc(hidden)]
     pub fn new() -> Self {
+        Self::last_os_error()
+    }
+
+    /// Create an error from the latest `errno`.
+    pub fn last_os_error() -> Self {
         Errno(unsafe { *libc::__errno_location() })
     }
 
