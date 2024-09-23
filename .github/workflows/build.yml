@@ -1,0 +1,42 @@
+name: CI workflow
+
+on:
+  pull_request:
+    branches:
+      - 'master'
+  workflow_dispatch:
+  push:
+    branches:
+      - 'master'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust-version: 'stable'
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@master
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust-version }}
+        target: ${{ matrix.target }}
+    - uses: swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+        save-if: ${{ github.ref == 'refs/heads/master' }}
+    - name: Build
+      run: |
+        cargo build --release --target=${{ matrix.target }}
+    - name: Clippy
+      run: |
+        cargo clippy --target=${{ matrix.target }}

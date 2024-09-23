@@ -1,3 +1,21 @@
+## v1.1
+
+- Added `DeviceQueue::bind` for binding queues from multiple different
+  interfaces to the same underlying `umem`. Previously only a single socket for
+  each additional queue could be bound when the same socket set up both
+  fill/completion rings as well as receive/transmit rings.
+- Note: I'm currently not entirely comfortable with the types of the `bind`
+  argument. They are not generic enough to cover all possible usages—the socket
+  of fq/cq socket itself is sufficient but a `User` with rx/tx sockopts is
+  required. At the same time however the types barely guard invariants that
+  would detect some misuse or failure paths at compile time. Also to-be-used
+  bind flags are associated with the socket as a `User` struct not as an
+  independent argument to the `bind` call.
+- Note: Please open PRs resolving this either way, not issues.
+- Rename `Errno::new` to `Errno::last_os_error` aligning it with the standard
+  library for this construct. The old name is kept as a documentation hidden
+  method for compatibility.
+
 ## v1.0.5
 
 - Discovered that the `XdpUmemReg` contains padding, being passed to the kernel

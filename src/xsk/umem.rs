@@ -8,7 +8,7 @@ use crate::xsk::{
     ptr_len, BufIdx, DeviceControl, DeviceQueue, DeviceRings, IfCtx, RingCons, RingProd, RingRx,
     RingTx, Socket, SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk, UmemConfig, User,
 };
-use crate::Errno;
+use crate::{Errno, LastErrno};
 
 use spin::RwLock;
 
@@ -138,12 +138,14 @@ impl Umem {
     }
 
     fn configure(this: &Umem) -> Result<(), Errno> {
-        let mut mr = XdpUmemReg::default();
-        mr.addr = this.umem_area.as_ptr() as *mut u8 as u64;
-        mr.len = ptr_len(this.umem_area.as_ptr()) as u64;
-        mr.chunk_size = this.config.frame_size;
-        mr.headroom = this.config.headroom;
-        mr.flags = this.config.flags;
+        let mut mr = XdpUmemReg {
+            addr: this.umem_area.as_ptr() as *mut u8 as u64,
+            len: ptr_len(this.umem_area.as_ptr()) as u64,
+            chunk_size: this.config.frame_size,
+            headroom: this.config.headroom,
+            flags: this.config.flags,
+            ..XdpUmemReg::default()
+        };
 
         let optlen = core::mem::size_of_val(&mr) as libc::socklen_t;
         let err = unsafe {
@@ -157,7 +159,7 @@ impl Umem {
         };
 
         if err != 0 {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         Ok(())
@@ -289,7 +291,7 @@ impl Umem {
             )
         } != 0
         {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         Ok(())
@@ -306,7 +308,7 @@ impl Umem {
             )
         } != 0
         {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         if unsafe {
@@ -319,7 +321,7 @@ impl Umem {
             )
         } != 0
         {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         Ok(())
@@ -337,7 +339,7 @@ impl Umem {
                 )
             } != 0
             {
-                return Err(Errno::new());
+                return Err(LastErrno)?;
             }
         }
 
@@ -352,7 +354,7 @@ impl Umem {
                 )
             } != 0
             {
-                return Err(Errno::new());
+                return Err(LastErrno)?;
             }
         }
 
@@ -363,7 +365,7 @@ impl Umem {
 impl DeviceQueue {
     /// Get the statistics of this XDP socket.
     pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
-        XdpStatistics::new(&*self.socket.fd)
+        XdpStatistics::new(&self.socket.fd)
     }
 
     /// Configure a default XDP program.
@@ -385,7 +387,7 @@ impl DeviceQueue {
 impl User {
     /// Get the statistics of this XDP socket.
     pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
-        XdpStatistics::new(&*self.socket.fd)
+        XdpStatistics::new(&self.socket.fd)
     }
 
     /// Map the RX ring into memory, returning a handle.

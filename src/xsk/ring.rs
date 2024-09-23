@@ -3,7 +3,7 @@ use core::{ops::RangeInclusive, ptr::NonNull};
 
 use crate::xdp::{XdpDesc, XdpRingOffsets};
 use crate::xsk::{BufIdx, RingCons, RingProd, SocketFd, SocketMmapOffsets, XskRing};
-use crate::Errno;
+use crate::{Errno, LastErrno};
 
 impl XskRing {
     const XDP_PGOFF_RX_RING: libc::off_t = 0;
@@ -66,7 +66,7 @@ impl XskRing {
         };
 
         if mmap == libc::MAP_FAILED {
-            return Err(Errno::new());
+            return Err(LastErrno)?;
         }
 
         assert!(!mmap.is_null());
