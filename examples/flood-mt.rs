@@ -113,13 +113,16 @@ fn main() {
     let tx_log_batch = [0; 33].map(AtomicU32::new);
     let cq_log_batch = [0; 33].map(AtomicU32::new);
 
+    let tx_by_sock: Vec<_> = (0..to_binds.len()).map(|_| AtomicU32::new(0)).collect();
+    let cq_by_queue: Vec<_> = (0..devices.len()).map(|_| AtomicU32::new(0)).collect();
+
     eprintln!(
         "Dumping {} B with {} packets!",
         total as f32 * desc.len as f32,
         total
     );
 
-    let completer = |mut queue: DeviceQueue| loop {
+    let completer = |mut queue: DeviceQueue, ctr: &AtomicU32| loop {
         let current = completed.load(Ordering::Relaxed);
 
         if current == total {
@@ -152,12 +155,13 @@ fn main() {
         }
 
         completed.fetch_add(comp_now, Ordering::Release);
+        ctr.fetch_add(comp_now, Ordering::Release);
         stat_loops.fetch_add(1, Ordering::Relaxed);
 
         cq_log_batch[32 - comp_now.leading_zeros() as usize].fetch_add(1, Ordering::Relaxed);
     };
 
-    let sender = |mut tx: RingTx| {
+    let sender = |mut tx: RingTx, ctr: &AtomicU32| {
         let mut stall_threshold = WAKE_THRESHOLD;
         loop {
             if sent.load(Ordering::Relaxed) >= total && completed.load(Ordering::Relaxed) >= total {
@@ -198,18 +202,19 @@ fn main() {
             // Stat tracking..
             sent_reserved.fetch_sub(send_batch - sent_now, Ordering::Relaxed);
             sent.fetch_add(sent_now, Ordering::Release);
+            ctr.fetch_add(sent_now, Ordering::Release);
 
             tx_log_batch[32 - sent_now.leading_zeros() as usize].fetch_add(1, Ordering::Relaxed);
         }
     };
 
     std::thread::scope(|scope| {
-        for queue in devices {
-            scope.spawn(|| completer(queue));
+        for (queue, ctr) in devices.into_iter().zip(cq_by_queue.iter()) {
+            scope.spawn(|| completer(queue, ctr));
         }
 
-        for tx in tx_queues {
-            scope.spawn(|| sender(tx));
+        for (tx, ctr) in tx_queues.into_iter().zip(tx_by_sock.iter()) {
+            scope.spawn(|| sender(tx, ctr));
         }
     });
 
@@ -239,6 +244,9 @@ fn main() {
 
     eprintln!("Tx Batch size (log2): {:?}", tx_log_batch);
     eprintln!("Cq Batch size (log2): {:?}", cq_log_batch);
+
+    eprintln!("Tx by socket: {:?}", tx_by_sock);
+    eprintln!("Cq by queue: {:?}", cq_by_queue);
 }
 
 fn prepare_buffer(offset: u64, buffer: &mut [u8], args: &Args) -> XdpDesc {
