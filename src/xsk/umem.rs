@@ -272,6 +272,7 @@ impl Umem {
         let mut sxdp = SockAddrXdp {
             ifindex: interface.socket.info.ctx.ifindex,
             queue_id: interface.socket.info.ctx.queue_id,
+            flags: interface.config.bind_flags,
             ..SockAddrXdp::default()
         };
 
@@ -279,7 +280,7 @@ impl Umem {
         // the interface indicated.
 
         if interface.socket.fd.0 != umem_sock.0 {
-            sxdp.flags = interface.config.bind_flags | SocketConfig::XDP_BIND_SHARED_UMEM;
+            sxdp.flags |= SocketConfig::XDP_BIND_SHARED_UMEM;
             sxdp.shared_umem_fd = umem_sock.0 as u32;
         }
 
