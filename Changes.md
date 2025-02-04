@@ -1,3 +1,9 @@
+## v1.1.1
+
+- The flags passed via `SocketFlags::bind_flags` are now applied to all bind
+  calls where previously they would only apply to sockets sharing the umem with
+  another prior socket.
+
 ## v1.1
 
 - Added `DeviceQueue::bind` for binding queues from multiple different
