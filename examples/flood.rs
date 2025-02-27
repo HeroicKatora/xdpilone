@@ -34,7 +34,7 @@ fn main() {
             &SocketConfig {
                 rx_size: None,
                 tx_size: NonZeroU32::new(1 << 14),
-                bind_flags: SocketConfig::XDP_BIND_ZEROCOPY | SocketConfig::XDP_BIND_NEED_WAKEUP,
+                bind_flags: SocketConfig::XDP_BIND_NEED_WAKEUP,
             },
         )
         .unwrap();
