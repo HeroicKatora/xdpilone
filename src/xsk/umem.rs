@@ -431,6 +431,7 @@ impl SocketConfig {
     /// Force copy-mode.
     pub const XDP_BIND_COPY: u16 = 1 << 1;
     /// Force zero-copy-mode.
+    /// check if your NIC supports zero-copy mode by searching `XDP_SETUP_XSK_POOL` in linux kernel source code.
     pub const XDP_BIND_ZEROCOPY: u16 = 1 << 2;
     /// Enable support for need wakeup.
     ///
