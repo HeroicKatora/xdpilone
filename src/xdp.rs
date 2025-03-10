@@ -118,6 +118,9 @@ pub struct XdpStatistics {
     pub rx_dropped: u64,
     pub rx_invalid_descs: u64,
     pub tx_invalid_descs: u64,
+    pub rx_ring_full: u64,
+    pub rx_fill_ring_empty_descs: u64,
+    pub tx_ring_empty_descs: u64,
 }
 
 impl Default for SockAddrXdp {
