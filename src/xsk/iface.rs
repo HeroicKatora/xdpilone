@@ -1,7 +1,7 @@
 use core::ffi::CStr;
 
 use super::{IfCtx, IfInfo, SocketFd, SocketMmapOffsets};
-use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics};
+use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics, XdpStatisticsV2};
 use crate::{Errno, LastErrno};
 
 impl IfInfo {
@@ -85,18 +85,18 @@ impl SocketMmapOffsets {
 
     /// Query the socket mmap offsets of an XDP socket.
     pub fn new(sock: &SocketFd) -> Result<Self, Errno> {
-        let mut this = SocketMmapOffsets {
-            inner: Default::default(),
-        };
-        this.set_from_fd(sock)?;
-        Ok(this)
+        SocketMmapOffsets::try_from(sock)
     }
+}
+
+impl TryFrom<&SocketFd> for SocketMmapOffsets {
+    type Error = Errno;
 
     /// Overwrite data with the socket mmap offsets of an XDP socket.
     ///
     /// This operation is atomic: On error, the previous values are retained. On success, the
     /// attributes have been updated.
-    pub fn set_from_fd(&mut self, sock: &SocketFd) -> Result<(), Errno> {
+    fn try_from(sock: &SocketFd) -> Result<Self, Self::Error> {
         use crate::xdp::{XdpRingOffsets, XdpRingOffsetsV1};
 
         // The flags was implicit, based on the consumer.
@@ -115,39 +115,28 @@ impl SocketMmapOffsets {
             init: (),
         }
 
-        let mut off = Offsets { init: () };
-        let mut optlen: libc::socklen_t = core::mem::size_of_val(&off) as libc::socklen_t;
+        let mut this = Self::default();
 
-        let err = unsafe {
-            libc::getsockopt(
-                sock.0,
-                super::SOL_XDP,
-                super::Umem::XDP_MMAP_OFFSETS,
-                (&mut off) as *mut _ as *mut libc::c_void,
-                &mut optlen,
-            )
-        };
-
-        if err != 0 {
-            return Err(LastErrno)?;
-        }
-
-        match optlen {
+        let off = Offsets { init: () };
+        match sock
+            .clone()
+            .get_opt(super::SOL_XDP, super::Umem::XDP_MMAP_OFFSETS, &off)?
+        {
             Self::OPT_V1 => {
                 let v1 = unsafe { off.v1 };
 
-                self.inner = XdpMmapOffsets {
+                this.inner = XdpMmapOffsets {
                     rx: fixup_v1(v1.rx),
                     tx: fixup_v1(v1.tx),
                     fr: fixup_v1(v1.fr),
                     cr: fixup_v1(v1.cr),
                 };
 
-                Ok(())
+                Ok(this)
             }
             Self::OPT_LATEST => {
-                self.inner = unsafe { off.latest };
-                Ok(())
+                this.inner = unsafe { off.latest };
+                Ok(this)
             }
             _ => Err(Errno(-libc::EINVAL)),
         }
@@ -156,27 +145,44 @@ impl SocketMmapOffsets {
 
 impl XdpStatistics {
     pub(crate) fn new(sock: &SocketFd) -> Result<Self, Errno> {
-        let mut this = Self::default();
-        this.set_from_fd(sock)?;
-        Ok(this)
+        XdpStatistics::try_from(sock)
     }
+}
 
-    pub(crate) fn set_from_fd(&mut self, sock: &SocketFd) -> Result<(), Errno> {
-        let mut optlen: libc::socklen_t = core::mem::size_of_val(self) as libc::socklen_t;
-        let err = unsafe {
-            libc::getsockopt(
-                sock.0,
-                super::SOL_XDP,
-                super::Umem::XDP_STATISTICS,
-                self as *mut _ as *mut libc::c_void,
-                &mut optlen,
-            )
-        };
+impl TryFrom<&SocketFd> for XdpStatistics {
+    type Error = Errno;
 
-        if err != 0 {
-            return Err(LastErrno)?;
+    fn try_from(sock: &SocketFd) -> Result<Self, Self::Error> {
+        let this = Self::default();
+
+        match sock
+            .clone()
+            .get_opt(super::SOL_XDP, super::Umem::XDP_STATISTICS, &this)
+        {
+            Ok(_) => Ok(this),
+            Err(err) => Err(err),
         }
+    }
+}
 
-        Ok(())
+impl XdpStatisticsV2 {
+    pub(crate) fn new(sock: &SocketFd) -> Result<Self, Errno> {
+        XdpStatisticsV2::try_from(sock)
+    }
+}
+
+impl TryFrom<&SocketFd> for XdpStatisticsV2 {
+    type Error = Errno;
+
+    fn try_from(sock: &SocketFd) -> Result<Self, Self::Error> {
+        let this = Self::default();
+
+        match sock
+            .clone()
+            .get_opt(super::SOL_XDP, super::Umem::XDP_STATISTICS, &this)
+        {
+            Ok(_) => Ok(this),
+            Err(err) => Err(err),
+        }
     }
 }
