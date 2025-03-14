@@ -138,7 +138,7 @@ impl Umem {
     }
 
     fn configure(this: &Umem) -> Result<(), Errno> {
-        let mr = XdpUmemReg {
+        let mut mr = XdpUmemReg {
             addr: this.umem_area.as_ptr() as *mut u8 as u64,
             len: ptr_len(this.umem_area.as_ptr()) as u64,
             chunk_size: this.config.frame_size,
@@ -147,7 +147,22 @@ impl Umem {
             ..XdpUmemReg::default()
         };
 
-        <SocketFd as Clone>::clone(&this.fd).set_opt(super::SOL_XDP, Self::XDP_UMEM_REG, &mr)
+        let optlen = core::mem::size_of_val(&mr) as libc::socklen_t;
+        let err = unsafe {
+            libc::setsockopt(
+                this.fd.0,
+                super::SOL_XDP,
+                Self::XDP_UMEM_REG,
+                (&mut mr) as *mut _ as *mut libc::c_void,
+                optlen,
+            )
+        };
+
+        if err != 0 {
+            return Err(LastErrno)?;
+        }
+
+        Ok(())
     }
 
     /// Configure the fill and completion queue for a interface queue.
@@ -284,23 +299,64 @@ impl Umem {
     }
 
     pub(crate) fn configure_cq(fd: &SocketFd, config: &UmemConfig) -> Result<(), Errno> {
-        fd.clone().set_opt(
-            super::SOL_XDP,
-            Umem::XDP_UMEM_COMPLETION_RING,
-            &config.complete_size,
-        )?;
-        fd.clone()
-            .set_opt(super::SOL_XDP, Umem::XDP_UMEM_FILL_RING, &config.fill_size)
+        if unsafe {
+            libc::setsockopt(
+                fd.0,
+                super::SOL_XDP,
+                Umem::XDP_UMEM_COMPLETION_RING,
+                (&config.complete_size) as *const _ as *const libc::c_void,
+                core::mem::size_of_val(&config.complete_size) as libc::socklen_t,
+            )
+        } != 0
+        {
+            return Err(LastErrno)?;
+        }
+
+        if unsafe {
+            libc::setsockopt(
+                fd.0,
+                super::SOL_XDP,
+                Umem::XDP_UMEM_FILL_RING,
+                (&config.fill_size) as *const _ as *const libc::c_void,
+                core::mem::size_of_val(&config.fill_size) as libc::socklen_t,
+            )
+        } != 0
+        {
+            return Err(LastErrno)?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn configure_rt(fd: &SocketFd, config: &SocketConfig) -> Result<(), Errno> {
         if let Some(num) = config.rx_size {
-            fd.clone()
-                .set_opt(super::SOL_XDP, Umem::XDP_RX_RING, &num)?;
+            if unsafe {
+                libc::setsockopt(
+                    fd.0,
+                    super::SOL_XDP,
+                    Umem::XDP_RX_RING,
+                    (&num) as *const _ as *const libc::c_void,
+                    core::mem::size_of_val(&num) as libc::socklen_t,
+                )
+            } != 0
+            {
+                return Err(LastErrno)?;
+            }
         }
+
         if let Some(num) = config.tx_size {
-            fd.clone()
-                .set_opt(super::SOL_XDP, Umem::XDP_TX_RING, &num)?;
+            if unsafe {
+                libc::setsockopt(
+                    fd.0,
+                    super::SOL_XDP,
+                    Umem::XDP_TX_RING,
+                    (&num) as *const _ as *const libc::c_void,
+                    core::mem::size_of_val(&num) as libc::socklen_t,
+                )
+            } != 0
+            {
+                return Err(LastErrno)?;
+            }
         }
 
         Ok(())

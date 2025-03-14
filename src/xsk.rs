@@ -24,7 +24,6 @@ use alloc::sync::Arc;
 use core::sync::atomic::AtomicU32;
 use core::{num::NonZeroU32, ptr::NonNull};
 
-#[derive(Clone)]
 pub(crate) struct SocketFd(libc::c_int);
 
 /// Not defined in all libc versions and a _system_ property, not an implementation property. Thus
@@ -223,7 +222,7 @@ pub(crate) struct DeviceRings {
     pub(crate) map: SocketMmapOffsets,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SocketMmapOffsets {
     inner: XdpMmapOffsets,
 }

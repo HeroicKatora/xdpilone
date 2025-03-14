@@ -22,15 +22,22 @@ impl Socket {
         let mut info = Arc::new(*interface);
 
         let mut netnscookie: u64 = 0;
-        match <SocketFd as Clone>::clone(&fd).get_opt(
-            libc::SOL_SOCKET,
-            Self::SO_NETNS_COOKIE,
-            &netnscookie,
-        ) {
-            Ok(_) => {}
-            Err(Errno(libc::ENOPROTOOPT)) => netnscookie = Self::INIT_NS,
-            Err(err) => return Err(err),
+        let mut optlen: libc::socklen_t = core::mem::size_of_val(&netnscookie) as libc::socklen_t;
+        let err = unsafe {
+            libc::getsockopt(
+                fd.0,
+                libc::SOL_SOCKET,
+                Self::SO_NETNS_COOKIE,
+                (&mut netnscookie) as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            )
         };
+
+        match err {
+            0 => {}
+            libc::ENOPROTOOPT => netnscookie = Self::INIT_NS,
+            _ => return Err(LastErrno)?,
+        }
 
         // Won't reallocate in practice.
         Arc::make_mut(&mut info).ctx.netnscookie = netnscookie;
@@ -46,54 +53,5 @@ impl SocketFd {
             return Err(LastErrno)?;
         }
         Ok(SocketFd(fd))
-    }
-
-    /// Get an option for the socket referred to by the current file descriptor, storing the result
-    /// in `val`
-    ///
-    /// Returns the actual size of the option's value
-    pub(crate) fn get_opt<T>(self, level: i32, name: i32, mut val: &T) -> Result<u32, Errno>
-    where
-        T: Sized,
-    {
-        let mut len: libc::socklen_t = core::mem::size_of_val(val) as libc::socklen_t;
-        let err = unsafe {
-            libc::getsockopt(
-                self.0,
-                level,
-                name,
-                (&mut val) as *mut _ as *mut libc::c_void,
-                &mut len,
-            )
-        };
-
-        if err != 0 {
-            return Err(LastErrno)?;
-        }
-
-        Ok(len)
-    }
-
-    /// Set an option for the socket referred to by the current file descriptor
-    pub(crate) fn set_opt<T>(self, level: i32, name: i32, mut val: &T) -> Result<(), Errno>
-    where
-        T: Sized,
-    {
-        let mut len: libc::socklen_t = core::mem::size_of_val(val) as libc::socklen_t;
-        let err = unsafe {
-            libc::getsockopt(
-                self.0,
-                level,
-                name,
-                (&mut val) as *mut _ as *mut libc::c_void,
-                &mut len,
-            )
-        };
-
-        if err != 0 {
-            return Err(LastErrno)?;
-        }
-
-        Ok(())
     }
 }
