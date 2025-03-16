@@ -111,6 +111,7 @@ pub struct SockAddrXdp {
     pub shared_umem_fd: u32,
 }
 
+/// Prior version of XdpStatisticsV2 that only contains fields present from <= Linux 5.8
 #[repr(C)]
 #[doc(alias = "xdp_statistics")]
 #[derive(Debug, Default, Copy, Clone)]
@@ -118,6 +119,22 @@ pub struct XdpStatistics {
     pub rx_dropped: u64,
     pub rx_invalid_descs: u64,
     pub tx_invalid_descs: u64,
+}
+
+#[repr(C)]
+#[doc(alias = "xdp_statistics")]
+#[derive(Debug, Default, Copy, Clone)]
+#[non_exhaustive]
+pub struct XdpStatisticsV2 {
+    pub rx_dropped: u64,
+    pub rx_invalid_descs: u64,
+    pub tx_invalid_descs: u64,
+    // Only set on >= Linux 5.9
+    pub rx_ring_full: u64,
+    // Only set on >= Linux 5.9
+    pub rx_fill_ring_empty_descs: u64,
+    // Only set on >= Linux 5.9
+    pub tx_ring_empty_descs: u64,
 }
 
 impl Default for SockAddrXdp {

@@ -1,7 +1,7 @@
 use core::ffi::CStr;
 
 use super::{IfCtx, IfInfo, SocketFd, SocketMmapOffsets};
-use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics};
+use crate::xdp::{XdpMmapOffsets, XdpMmapOffsetsV1, XdpStatistics, XdpStatisticsV2};
 use crate::{Errno, LastErrno};
 
 impl IfInfo {
@@ -155,6 +155,33 @@ impl SocketMmapOffsets {
 }
 
 impl XdpStatistics {
+    pub(crate) fn new(sock: &SocketFd) -> Result<Self, Errno> {
+        let mut this = Self::default();
+        this.set_from_fd(sock)?;
+        Ok(this)
+    }
+
+    pub(crate) fn set_from_fd(&mut self, sock: &SocketFd) -> Result<(), Errno> {
+        let mut optlen: libc::socklen_t = core::mem::size_of_val(self) as libc::socklen_t;
+        let err = unsafe {
+            libc::getsockopt(
+                sock.0,
+                super::SOL_XDP,
+                super::Umem::XDP_STATISTICS,
+                self as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            )
+        };
+
+        if err != 0 {
+            return Err(LastErrno)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl XdpStatisticsV2 {
     pub(crate) fn new(sock: &SocketFd) -> Result<Self, Errno> {
         let mut this = Self::default();
         this.set_from_fd(sock)?;

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
-use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpUmemReg};
+use crate::xdp::{SockAddrXdp, XdpDesc, XdpStatistics, XdpStatisticsV2, XdpUmemReg};
 use crate::xsk::{
     ptr_len, BufIdx, DeviceControl, DeviceQueue, DeviceRings, IfCtx, RingCons, RingProd, RingRx,
     RingTx, Socket, SocketConfig, SocketFd, SocketMmapOffsets, Umem, UmemChunk, UmemConfig, User,
@@ -365,8 +365,14 @@ impl Umem {
 
 impl DeviceQueue {
     /// Get the statistics of this XDP socket.
+    #[deprecated = "Consider using `statistics_v2` for additional statistics exposed on >= Linux 5.9"]
     pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
         XdpStatistics::new(&self.socket.fd)
+    }
+
+    /// Get the statistics of this XDP socket.
+    pub fn statistics_v2(&self) -> Result<XdpStatisticsV2, Errno> {
+        XdpStatisticsV2::new(&self.socket.fd)
     }
 
     /// Configure a default XDP program.
@@ -387,8 +393,14 @@ impl DeviceQueue {
 
 impl User {
     /// Get the statistics of this XDP socket.
+    #[deprecated = "Consider using `statistics_v2` for additional statistics exposed on >= Linux 5.9"]
     pub fn statistics(&self) -> Result<XdpStatistics, Errno> {
         XdpStatistics::new(&self.socket.fd)
+    }
+
+    /// Get the statistics of this XDP socket.
+    pub fn statistics_v2(&self) -> Result<XdpStatisticsV2, Errno> {
+        XdpStatisticsV2::new(&self.socket.fd)
     }
 
     /// Map the RX ring into memory, returning a handle.
