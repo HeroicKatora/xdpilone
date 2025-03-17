@@ -1,3 +1,12 @@
+## v1.2.0
+
+- Introduced `XdpStatisticsV2`, a forward compatible struct for fetching
+  statistics related to an XDP socket. The kernel in fills the passed struct
+  depending on the indicated size, older kernels will leave some of its members
+  untouched. This struct is marked non-exhaustive so that any future fields
+  added by the kernel can be supported in a minor change without requiring
+  further separate types.
+
 ## v1.1.1
 
 - The flags passed via `SocketFlags::bind_flags` are now applied to all bind

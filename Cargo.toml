@@ -1,12 +1,12 @@
 [package]
 # Distribution information.
 name = "xdpilone"
-version = "1.1.1"
+version = "1.2.0"
 
 # User facing information.
 description = "Interaction with Linux XDP sockets and rings. No libbpf/libxpd-sys. Lightweight, high-performance."
 license = "EUPL-1.2"
-authors = ["Andreas Molzer"]
+authors = ["Aurelia Molzer"]
 categories = ["network-programming", "os::linux-apis", "no-std"]
 repository = "https://github.com/HeroicKatora/xdpilone"
 readme = "Readme.md"
